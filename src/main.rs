@@ -1,3 +1,8 @@
+mod readline;
+mod repl;
+
 fn main() {
-    println!("Hello, world!");
+    let _screen = crossterm::RawScreen::into_raw_mode().unwrap();
+
+    repl::repl();
 }
