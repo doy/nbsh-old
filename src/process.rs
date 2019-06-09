@@ -1,12 +1,52 @@
 use futures::future::Future;
+use snafu::{ResultExt, Snafu};
 use std::io::{Read, Write};
 use tokio::io::AsyncRead;
 use tokio_pty_process::CommandExt;
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 pub enum Error {
-    IOError(std::io::Error),
-    ParserError(crate::parser::Error),
+    #[snafu(display("failed to open a pty: {}", source))]
+    OpenPty { source: std::io::Error },
+
+    #[snafu(display(
+        "failed to spawn process for {} {}: {}",
+        cmd,
+        args.join(" "),
+        source
+    ))]
+    SpawnProcess {
+        cmd: String,
+        args: Vec<String>,
+        source: std::io::Error,
+    },
+
+    #[snafu(display("failed to parse command line '{}': {}", line, source))]
+    ParserError {
+        line: String,
+        source: crate::parser::Error,
+    },
+
+    #[snafu(display("failed to write to pty: {}", source))]
+    WriteToPty { source: std::io::Error },
+
+    #[snafu(display("failed to read from terminal: {}", source))]
+    ReadFromTerminal { source: std::io::Error },
+
+    #[snafu(display(
+        "failed to clear ready state on pty for reading: {}",
+        source
+    ))]
+    PtyClearReadReady { source: std::io::Error },
+
+    #[snafu(display("failed to poll for process exit: {}", source))]
+    ProcessExitPoll { source: std::io::Error },
+
+    #[snafu(display(
+        "failed to put the terminal into raw mode: {}",
+        source
+    ))]
+    IntoRawMode { source: std::io::Error },
 }
 
 pub fn spawn(line: &str) -> Result<RunningProcess, Error> {
@@ -32,15 +72,15 @@ pub struct RunningProcess {
 
 impl RunningProcess {
     fn new(line: &str) -> Result<Self, Error> {
-        let pty = tokio_pty_process::AsyncPtyMaster::open()
-            .map_err(|e| Error::IOError(e))?;
+        let pty =
+            tokio_pty_process::AsyncPtyMaster::open().context(OpenPty)?;
 
         let (cmd, args) =
-            crate::parser::parse(line).map_err(|e| Error::ParserError(e))?;
-        let process = std::process::Command::new(cmd)
+            crate::parser::parse(line).context(ParserError { line })?;
+        let process = std::process::Command::new(cmd.clone())
             .args(&args)
             .spawn_pty_async(&pty)
-            .map_err(|e| Error::IOError(e))?;
+            .context(SpawnProcess { cmd, args })?;
 
         // TODO: tokio::io::stdin is broken (it's blocking)
         // let input = tokio::io::stdin();
@@ -53,7 +93,8 @@ impl RunningProcess {
             buf: Vec::with_capacity(4096),
             output_done: false,
             exit_done: false,
-            _screen: crossterm::RawScreen::into_raw_mode().unwrap(),
+            _screen: crossterm::RawScreen::into_raw_mode()
+                .context(IntoRawMode)?,
         })
     }
 }
@@ -72,21 +113,12 @@ impl futures::stream::Stream for RunningProcess {
                 let mut stdin = stdin.lock();
                 let mut buf = vec![0; 4096];
                 // TODO: async
-                match stdin.read(&mut buf) {
-                    Ok(n) => {
-                        if n > 0 {
-                            let bytes = buf[..n].to_vec();
+                let n = stdin.read(&mut buf).context(ReadFromTerminal)?;
+                if n > 0 {
+                    let bytes = buf[..n].to_vec();
 
-                            // TODO: async
-                            let res = self.pty.write_all(&bytes);
-                            if let Err(e) = res {
-                                return Err(Error::IOError(e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return Err(Error::IOError(e));
-                    }
+                    // TODO: async
+                    self.pty.write_all(&bytes).context(WriteToPty)?;
                 }
             }
             _ => {}
@@ -95,16 +127,13 @@ impl futures::stream::Stream for RunningProcess {
         // the buffer but we don't read it all in the previous read call,
         // since i think we won't get another notification until new bytes
         // actually arrive even if there are bytes in the buffer
-        if let Err(e) = self.input.clear_read_ready(ready) {
-            return Err(Error::IOError(e));
-        }
+        self.input
+            .clear_read_ready(ready)
+            .context(PtyClearReadReady)?;
 
         if !self.output_done {
             self.buf.clear();
-            let output_poll = self
-                .pty
-                .read_buf(&mut self.buf)
-                .map_err(|e| Error::IOError(e));
+            let output_poll = self.pty.read_buf(&mut self.buf);
             match output_poll {
                 Ok(futures::Async::Ready(n)) => {
                     let bytes = self.buf[..n].to_vec();
@@ -128,14 +157,16 @@ impl futures::stream::Stream for RunningProcess {
                     return Ok(futures::Async::NotReady);
                 }
                 Err(_) => {
+                    // explicitly ignoring errors (for now?) because we
+                    // always read off the end of the pty after the process
+                    // is done
                     self.output_done = true;
                 }
             }
         }
 
         if !self.exit_done {
-            let exit_poll =
-                self.process.poll().map_err(|e| Error::IOError(e));
+            let exit_poll = self.process.poll().context(ProcessExitPoll);
             match exit_poll {
                 Ok(futures::Async::Ready(status)) => {
                     self.exit_done = true;

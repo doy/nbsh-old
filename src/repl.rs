@@ -1,12 +1,18 @@
 use futures::future::{Future, IntoFuture};
 use futures::stream::Stream;
+use snafu::{ResultExt, Snafu};
 use std::io::Write;
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 enum Error {
-    ReadError(crate::readline::Error),
-    EvalError(crate::process::Error),
-    PrintError(std::io::Error),
+    #[snafu(display("error during read: {}", source))]
+    ReadError { source: crate::readline::Error },
+
+    #[snafu(display("error during eval: {}", source))]
+    EvalError { source: crate::process::Error },
+
+    #[snafu(display("error during print: {}", source))]
+    PrintError { source: std::io::Error },
 }
 
 pub fn repl() {
@@ -39,17 +45,24 @@ pub fn repl() {
                 eprint!("process exited weirdly?\r\n");
                 return Ok((done, false));
             }
-            Err(Error::ReadError(crate::readline::Error::EOF)) => {
+            Err(Error::ReadError {
+                source: crate::readline::Error::EOF,
+            }) => {
                 return Ok((done, true));
             }
-            Err(Error::EvalError(crate::process::Error::ParserError(
-                crate::parser::Error::CommandRequired,
-            ))) => {
+            Err(Error::EvalError {
+                source:
+                    crate::process::Error::ParserError {
+                        source: crate::parser::Error::CommandRequired,
+                        line: _,
+                    },
+            }) => {
                 return Ok((done, false));
             }
             Err(e) => {
                 let stderr = std::io::stderr();
                 let mut stderr = stderr.lock();
+                // panics seem fine for errors during error handling
                 write!(stderr, "error: {:?}\r\n", e).unwrap();
                 stderr.flush().unwrap();
                 return Ok((done, false));
@@ -60,7 +73,10 @@ pub fn repl() {
 }
 
 fn read() -> impl futures::future::Future<Item = String, Error = Error> {
-    crate::readline::readline("$ ", true).map_err(|e| Error::ReadError(e))
+    crate::readline::readline("$ ", true)
+        .into_future()
+        .flatten()
+        .map_err(|e| Error::ReadError { source: e })
 }
 
 fn eval(
@@ -70,12 +86,12 @@ fn eval(
     crate::process::spawn(line)
         .into_future()
         .flatten_stream()
-        .map_err(|e| Error::EvalError(e))
+        .map_err(|e| Error::EvalError { source: e })
 }
 
 fn print(out: &[u8]) -> Result<(), Error> {
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
-    stdout.write(out).map_err(|e| Error::PrintError(e))?;
-    stdout.flush().map_err(|e| Error::PrintError(e))
+    stdout.write(out).context(PrintError)?;
+    stdout.flush().context(PrintError)
 }

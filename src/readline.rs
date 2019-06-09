@@ -1,9 +1,29 @@
+use snafu::{ensure, ResultExt, Snafu};
 use std::io::Write;
 
-#[derive(Debug)]
+#[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("failed to write to the terminal: {}", source))]
+    WriteToTerminal { source: std::io::Error },
+
+    #[snafu(display("end of input"))]
     EOF,
-    IOError(std::io::Error),
+
+    #[snafu(display(
+        "failed to put the terminal into raw mode: {}",
+        source
+    ))]
+    IntoRawMode { source: std::io::Error },
+
+    #[snafu(display(
+        "failed to spawn a background thread to read terminal input: {}",
+        source
+    ))]
+    TerminalInputReadingThread { source: std::io::Error },
+}
+
+pub fn readline(prompt: &str, echo: bool) -> Result<Readline, Error> {
+    Readline::new(prompt, echo)
 }
 
 pub struct Readline {
@@ -22,10 +42,11 @@ struct ReadlineState {
 }
 
 impl Readline {
-    fn new(prompt: &str, echo: bool) -> Self {
-        let screen = crossterm::RawScreen::into_raw_mode().unwrap();
+    fn new(prompt: &str, echo: bool) -> Result<Self, Error> {
+        let screen =
+            crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?;
 
-        Readline {
+        Ok(Readline {
             reader: None,
             state: ReadlineState {
                 prompt: prompt.to_string(),
@@ -35,7 +56,20 @@ impl Readline {
                 wrote_prompt: false,
             },
             _raw_screen: screen,
+        })
+    }
+
+    fn with_reader<F, T>(&mut self, f: F) -> Result<T, Error>
+    where
+        F: FnOnce(&KeyReader, &mut ReadlineState) -> Result<T, Error>,
+    {
+        let mut reader_opt = self.reader.take();
+        if reader_opt.is_none() {
+            reader_opt = Some(KeyReader::new(futures::task::current())?);
         }
+        let ret = f(reader_opt.as_ref().unwrap(), &mut self.state);
+        self.reader = reader_opt;
+        ret
     }
 }
 
@@ -60,9 +94,9 @@ impl ReadlineState {
         match event {
             crossterm::KeyEvent::Char(c) => {
                 if self.cursor != self.buffer.len() && c != '\n' {
-                    self.echo(b"\x1b[@").map_err(|e| Error::IOError(e))?;
+                    self.echo(b"\x1b[@").context(WriteToTerminal)?;
                 }
-                self.echo_char(c).map_err(|e| Error::IOError(e))?;
+                self.echo_char(c).context(WriteToTerminal)?;
 
                 if c == '\n' {
                     return Ok(futures::Async::Ready(self.buffer.clone()));
@@ -73,16 +107,15 @@ impl ReadlineState {
             crossterm::KeyEvent::Ctrl(c) => {
                 if c == 'd' {
                     if self.buffer.is_empty() {
-                        self.echo_char('\n')
-                            .map_err(|e| Error::IOError(e))?;
-                        return Err(Error::EOF);
+                        self.echo_char('\n').context(WriteToTerminal)?;
+                        ensure!(false, EOF);
                     }
                 }
                 if c == 'c' {
                     self.buffer = String::new();
                     self.cursor = 0;
-                    self.echo_char('\n').map_err(|e| Error::IOError(e))?;
-                    self.prompt().map_err(|e| Error::IOError(e))?;
+                    self.echo_char('\n').context(WriteToTerminal)?;
+                    self.prompt().context(WriteToTerminal)?;
                 }
             }
             crossterm::KeyEvent::Backspace => {
@@ -90,25 +123,23 @@ impl ReadlineState {
                     self.cursor -= 1;
                     self.buffer.remove(self.cursor);
                     if self.cursor == self.buffer.len() {
-                        self.echo(b"\x08 \x08")
-                            .map_err(|e| Error::IOError(e))?;
+                        self.echo(b"\x08 \x08").context(WriteToTerminal)?;
                     } else {
-                        self.echo(b"\x08\x1b[P")
-                            .map_err(|e| Error::IOError(e))?;
+                        self.echo(b"\x08\x1b[P").context(WriteToTerminal)?;
                     }
                 }
             }
             crossterm::KeyEvent::Left => {
                 let cursor = 0.max(self.cursor - 1);
                 if cursor != self.cursor {
-                    self.write(b"\x1b[D").map_err(|e| Error::IOError(e))?;
+                    self.write(b"\x1b[D").context(WriteToTerminal)?;
                     self.cursor = cursor;
                 }
             }
             crossterm::KeyEvent::Right => {
                 let cursor = self.buffer.len().min(self.cursor + 1);
                 if cursor != self.cursor {
-                    self.write(b"\x1b[C").map_err(|e| Error::IOError(e))?;
+                    self.write(b"\x1b[C").context(WriteToTerminal)?;
                     self.cursor = cursor;
                 }
             }
@@ -159,25 +190,30 @@ impl futures::future::Future for Readline {
 
     fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
         if !self.state.wrote_prompt {
-            self.state.prompt().map_err(|e| Error::IOError(e))?;
+            self.state.prompt().context(WriteToTerminal)?;
             self.state.wrote_prompt = true;
         }
 
-        let reader = self
-            .reader
-            .get_or_insert_with(|| KeyReader::new(futures::task::current()));
-        while let Some(event) = reader.poll() {
-            let a = self.state.process_event(event)?;
-            if a.is_ready() {
-                return Ok(a);
+        self.with_reader(|reader, state| {
+            loop {
+                match reader.try_recv() {
+                    Ok(event) => {
+                        let a = state.process_event(event)?;
+                        if a.is_ready() {
+                            return Ok(a);
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        return Ok(futures::Async::NotReady)
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        // is EOF correct here?
+                        ensure!(false, EOF)
+                    }
+                }
             }
-        }
-        Ok(futures::Async::NotReady)
+        })
     }
-}
-
-pub fn readline(prompt: &str, echo: bool) -> Readline {
-    Readline::new(prompt, echo)
 }
 
 struct KeyReader {
@@ -186,40 +222,43 @@ struct KeyReader {
 }
 
 impl KeyReader {
-    fn new(task: futures::task::Task) -> Self {
+    fn new(task: futures::task::Task) -> Result<Self, Error> {
         let reader = crossterm::input().read_sync();
         let (events_tx, events_rx) = std::sync::mpsc::channel();
         let (quit_tx, quit_rx) = std::sync::mpsc::channel();
         // TODO: this is pretty janky - it'd be better to build in more useful
         // support to crossterm directly
-        std::thread::spawn(move || {
-            for event in reader {
-                let newline = event
-                    == crossterm::InputEvent::Keyboard(
-                        crossterm::KeyEvent::Char('\n'),
-                    );
-                events_tx.send(event).unwrap();
-                task.notify();
-                if newline {
-                    break;
+        std::thread::Builder::new()
+            .spawn(move || {
+                for event in reader {
+                    let newline = event
+                        == crossterm::InputEvent::Keyboard(
+                            crossterm::KeyEvent::Char('\n'),
+                        );
+                    // unwrap is unpleasant, but so is figuring out how to
+                    // propagate the error back to the main thread
+                    events_tx.send(event).unwrap();
+                    task.notify();
+                    if newline {
+                        break;
+                    }
+                    if let Ok(_) = quit_rx.try_recv() {
+                        break;
+                    }
                 }
-                if let Ok(_) = quit_rx.try_recv() {
-                    break;
-                }
-            }
-        });
+            })
+            .context(TerminalInputReadingThread)?;
 
-        KeyReader {
+        Ok(KeyReader {
             events: events_rx,
             quit: quit_tx,
-        }
+        })
     }
 
-    fn poll(&self) -> Option<crossterm::InputEvent> {
-        if let Ok(event) = self.events.try_recv() {
-            return Some(event);
-        }
-        None
+    fn try_recv(
+        &self,
+    ) -> Result<crossterm::InputEvent, std::sync::mpsc::TryRecvError> {
+        self.events.try_recv()
     }
 }
 
