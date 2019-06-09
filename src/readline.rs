@@ -104,20 +104,60 @@ impl ReadlineState {
                 self.buffer.insert(self.cursor, c);
                 self.cursor += 1;
             }
-            crossterm::KeyEvent::Ctrl(c) => {
-                if c == 'd' {
-                    if self.buffer.is_empty() {
-                        self.echo_char('\n').context(WriteToTerminal)?;
-                        ensure!(false, EOF);
+            crossterm::KeyEvent::Ctrl(c) => match c {
+                'a' => {
+                    if self.cursor != 0 {
+                        self.echo(
+                            &format!("\x1b[{}D", self.cursor).into_bytes(),
+                        )
+                        .context(WriteToTerminal)?;
+                        self.cursor = 0;
                     }
                 }
-                if c == 'c' {
+                'c' => {
                     self.buffer = String::new();
                     self.cursor = 0;
                     self.echo_char('\n').context(WriteToTerminal)?;
                     self.prompt().context(WriteToTerminal)?;
                 }
-            }
+                'd' => {
+                    if self.buffer.is_empty() {
+                        self.echo_char('\n').context(WriteToTerminal)?;
+                        ensure!(false, EOF);
+                    }
+                }
+                'e' => {
+                    if self.cursor != self.buffer.len() {
+                        self.echo(
+                            &format!(
+                                "\x1b[{}C",
+                                self.buffer.len() - self.cursor
+                            )
+                            .into_bytes(),
+                        )
+                        .context(WriteToTerminal)?;
+                        self.cursor = self.buffer.len();
+                    }
+                }
+                'u' => {
+                    if self.cursor != 0 {
+                        self.echo(
+                            std::iter::repeat(b'\x08')
+                                .take(self.cursor)
+                                .chain(
+                                    format!("\x1b[{}P", self.cursor)
+                                        .into_bytes(),
+                                )
+                                .collect::<Vec<_>>()
+                                .as_ref(),
+                        )
+                        .context(WriteToTerminal)?;
+                        self.buffer = self.buffer.split_off(self.cursor);
+                        self.cursor = 0;
+                    }
+                }
+                _ => {}
+            },
             crossterm::KeyEvent::Backspace => {
                 if self.cursor != 0 {
                     self.cursor -= 1;
@@ -139,6 +179,12 @@ impl ReadlineState {
                 if self.cursor != self.buffer.len() {
                     self.cursor += 1;
                     self.write(b"\x1b[C").context(WriteToTerminal)?;
+                }
+            }
+            crossterm::KeyEvent::Delete => {
+                if self.cursor != self.buffer.len() {
+                    self.buffer.remove(self.cursor);
+                    self.echo(b"\x1b[P").context(WriteToTerminal)?;
                 }
             }
             _ => {}
