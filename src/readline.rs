@@ -8,11 +8,16 @@ pub enum Error {
 
 pub struct Readline {
     reader: Option<KeyReader>,
-    buffer: String,
-    prompt: String,
-    wrote_prompt: bool,
-    echo: bool,
+    state: ReadlineState,
     _raw_screen: crossterm::RawScreen,
+}
+
+struct ReadlineState {
+    prompt: String,
+    echo: bool,
+
+    buffer: String,
+    wrote_prompt: bool,
 }
 
 impl Readline {
@@ -21,14 +26,18 @@ impl Readline {
 
         Readline {
             reader: None,
-            buffer: String::new(),
-            prompt: prompt.to_string(),
-            wrote_prompt: false,
-            echo,
+            state: ReadlineState {
+                prompt: prompt.to_string(),
+                echo,
+                buffer: String::new(),
+                wrote_prompt: false,
+            },
             _raw_screen: screen,
         }
     }
+}
 
+impl ReadlineState {
     fn process_event(
         &mut self,
         event: crossterm::InputEvent,
@@ -105,19 +114,21 @@ impl futures::future::Future for Readline {
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        if !self.wrote_prompt {
-            self.prompt().map_err(|e| Error::IOError(e))?;
-            self.wrote_prompt = true;
+        if !self.state.wrote_prompt {
+            self.state.prompt().map_err(|e| Error::IOError(e))?;
+            self.state.wrote_prompt = true;
         }
 
         let reader = self
             .reader
             .get_or_insert_with(|| KeyReader::new(futures::task::current()));
-        if let Some(event) = reader.poll() {
-            self.process_event(event)
-        } else {
-            Ok(futures::Async::NotReady)
+        while let Some(event) = reader.poll() {
+            let a = self.state.process_event(event)?;
+            if a.is_ready() {
+                return Ok(a);
+            }
         }
+        Ok(futures::Async::NotReady)
     }
 }
 

@@ -16,6 +16,7 @@ pub fn repl() {
         }
 
         let repl = read().and_then(|line| {
+            eprint!("running '{}'\r\n", line);
             eval(&line).fold(None, |acc, event| match event {
                 crate::process::ProcessEvent::Output(out) => {
                     match print(&out) {
@@ -46,7 +47,7 @@ pub fn repl() {
                 let mut stderr = stderr.lock();
                 write!(stderr, "error: {:?}\r\n", e).unwrap();
                 stderr.flush().unwrap();
-                return Err(());
+                return Ok((done, false));
             }
         }))
     });
