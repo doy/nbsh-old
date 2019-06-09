@@ -63,7 +63,7 @@ pub fn repl() {
                 let stderr = std::io::stderr();
                 let mut stderr = stderr.lock();
                 // panics seem fine for errors during error handling
-                write!(stderr, "error: {:?}\r\n", e).unwrap();
+                write!(stderr, "{}\r\n", e).unwrap();
                 stderr.flush().unwrap();
                 return Ok((done, false));
             }

@@ -9,17 +9,8 @@ pub enum Error {
     #[snafu(display("failed to open a pty: {}", source))]
     OpenPty { source: std::io::Error },
 
-    #[snafu(display(
-        "failed to spawn process for {} {}: {}",
-        cmd,
-        args.join(" "),
-        source
-    ))]
-    SpawnProcess {
-        cmd: String,
-        args: Vec<String>,
-        source: std::io::Error,
-    },
+    #[snafu(display("failed to spawn process for `{}`: {}", cmd, source))]
+    SpawnProcess { cmd: String, source: std::io::Error },
 
     #[snafu(display("failed to parse command line '{}': {}", line, source))]
     ParserError {
@@ -80,7 +71,7 @@ impl RunningProcess {
         let process = std::process::Command::new(cmd.clone())
             .args(&args)
             .spawn_pty_async(&pty)
-            .context(SpawnProcess { cmd, args })?;
+            .context(SpawnProcess { cmd })?;
 
         // TODO: tokio::io::stdin is broken (it's blocking)
         // let input = tokio::io::stdin();
