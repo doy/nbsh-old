@@ -59,6 +59,9 @@ impl ReadlineState {
     ) -> std::result::Result<futures::Async<String>, Error> {
         match event {
             crossterm::KeyEvent::Char(c) => {
+                if self.cursor != self.buffer.len() && c != '\n' {
+                    self.echo(b"\x1b[@").map_err(|e| Error::IOError(e))?;
+                }
                 self.echo_char(c).map_err(|e| Error::IOError(e))?;
 
                 if c == '\n' {
@@ -86,7 +89,27 @@ impl ReadlineState {
                 if self.cursor != 0 {
                     self.cursor -= 1;
                     self.buffer.remove(self.cursor);
-                    self.echo(b"\x08 \x08").map_err(|e| Error::IOError(e))?;
+                    if self.cursor == self.buffer.len() {
+                        self.echo(b"\x08 \x08")
+                            .map_err(|e| Error::IOError(e))?;
+                    } else {
+                        self.echo(b"\x08\x1b[P")
+                            .map_err(|e| Error::IOError(e))?;
+                    }
+                }
+            }
+            crossterm::KeyEvent::Left => {
+                let cursor = 0.max(self.cursor - 1);
+                if cursor != self.cursor {
+                    self.write(b"\x1b[D").map_err(|e| Error::IOError(e))?;
+                    self.cursor = cursor;
+                }
+            }
+            crossterm::KeyEvent::Right => {
+                let cursor = self.buffer.len().min(self.cursor + 1);
+                if cursor != self.cursor {
+                    self.write(b"\x1b[C").map_err(|e| Error::IOError(e))?;
+                    self.cursor = cursor;
                 }
             }
             _ => {}
