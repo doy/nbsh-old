@@ -12,9 +12,23 @@ pub struct Readline {
     prompt: String,
     wrote_prompt: bool,
     echo: bool,
+    _raw_screen: crossterm::RawScreen,
 }
 
 impl Readline {
+    fn new(prompt: &str, echo: bool) -> Self {
+        let screen = crossterm::RawScreen::into_raw_mode().unwrap();
+
+        Readline {
+            reader: None,
+            buffer: String::new(),
+            prompt: prompt.to_string(),
+            wrote_prompt: false,
+            echo,
+            _raw_screen: screen,
+        }
+    }
+
     fn process_event(
         &mut self,
         event: crossterm::InputEvent,
@@ -85,6 +99,7 @@ impl Readline {
     }
 }
 
+#[must_use = "futures do nothing unless polled"]
 impl futures::future::Future for Readline {
     type Item = String;
     type Error = Error;
@@ -95,9 +110,9 @@ impl futures::future::Future for Readline {
             self.wrote_prompt = true;
         }
 
-        let reader = self.reader.get_or_insert_with(|| {
-            KeyReader::new(tokio::prelude::task::current())
-        });
+        let reader = self
+            .reader
+            .get_or_insert_with(|| KeyReader::new(futures::task::current()));
         if let Some(event) = reader.poll() {
             self.process_event(event)
         } else {
@@ -107,13 +122,7 @@ impl futures::future::Future for Readline {
 }
 
 pub fn readline(prompt: &str, echo: bool) -> Readline {
-    Readline {
-        reader: None,
-        buffer: String::new(),
-        prompt: prompt.to_string(),
-        wrote_prompt: false,
-        echo,
-    }
+    Readline::new(prompt, echo)
 }
 
 struct KeyReader {
@@ -122,10 +131,12 @@ struct KeyReader {
 }
 
 impl KeyReader {
-    fn new(task: tokio::prelude::task::Task) -> Self {
+    fn new(task: futures::task::Task) -> Self {
         let reader = crossterm::input().read_sync();
         let (events_tx, events_rx) = std::sync::mpsc::channel();
         let (quit_tx, quit_rx) = std::sync::mpsc::channel();
+        // TODO: this is pretty janky - it'd be better to build in more useful
+        // support to crossterm directly
         std::thread::spawn(move || {
             for event in reader {
                 let newline = event
@@ -162,8 +173,6 @@ impl Drop for KeyReader {
         // don't care if it fails to send, this can happen if the thread
         // terminates due to seeing a newline before the keyreader goes out of
         // scope
-        match self.quit.send(()) {
-            _ => {}
-        }
+        let _ = self.quit.send(());
     }
 }
