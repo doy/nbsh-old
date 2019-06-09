@@ -9,7 +9,7 @@ enum Error {
     ReadError { source: crate::readline::Error },
 
     #[snafu(display("error during eval: {}", source))]
-    EvalError { source: crate::process::Error },
+    EvalError { source: crate::eval::Error },
 
     #[snafu(display("error during print: {}", source))]
     PrintError { source: std::io::Error },
@@ -24,25 +24,26 @@ pub fn repl() {
         let repl = read().and_then(|line| {
             eprint!("running '{}'\r\n", line);
             eval(&line).fold(None, |acc, event| match event {
-                crate::process::ProcessEvent::Output(out) => {
-                    match print(&out) {
-                        Ok(()) => futures::future::ok(acc),
-                        Err(e) => futures::future::err(e),
-                    }
+                crate::eval::CommandEvent::Output(out) => match print(&out) {
+                    Ok(()) => futures::future::ok(acc),
+                    Err(e) => futures::future::err(e),
+                },
+                crate::eval::CommandEvent::ProcessExit(status) => {
+                    futures::future::ok(Some(format!("{}", status)))
                 }
-                crate::process::ProcessEvent::Exit(status) => {
-                    futures::future::ok(Some(status))
+                crate::eval::CommandEvent::BuiltinExit => {
+                    futures::future::ok(Some(format!("success")))
                 }
             })
         });
 
         Some(repl.then(move |res| match res {
             Ok(Some(status)) => {
-                eprint!("process exited with status {}\r\n", status);
+                eprint!("command exited: {}\r\n", status);
                 return Ok((done, false));
             }
             Ok(None) => {
-                eprint!("process exited weirdly?\r\n");
+                eprint!("command exited weirdly?\r\n");
                 return Ok((done, false));
             }
             Err(Error::ReadError {
@@ -52,7 +53,7 @@ pub fn repl() {
             }
             Err(Error::EvalError {
                 source:
-                    crate::process::Error::ParserError {
+                    crate::eval::Error::ParserError {
                         source: crate::parser::Error::CommandRequired,
                         line: _,
                     },
@@ -81,9 +82,9 @@ fn read() -> impl futures::future::Future<Item = String, Error = Error> {
 
 fn eval(
     line: &str,
-) -> impl futures::stream::Stream<Item = crate::process::ProcessEvent, Error = Error>
+) -> impl futures::stream::Stream<Item = crate::eval::CommandEvent, Error = Error>
 {
-    crate::process::spawn(line)
+    crate::eval::eval(line)
         .into_future()
         .flatten_stream()
         .map_err(|e| Error::EvalError { source: e })

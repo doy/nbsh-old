@@ -12,12 +12,6 @@ pub enum Error {
     #[snafu(display("failed to spawn process for `{}`: {}", cmd, source))]
     SpawnProcess { cmd: String, source: std::io::Error },
 
-    #[snafu(display("failed to parse command line '{}': {}", line, source))]
-    ParserError {
-        line: String,
-        source: crate::parser::Error,
-    },
-
     #[snafu(display("failed to write to pty: {}", source))]
     WriteToPty { source: std::io::Error },
 
@@ -40,13 +34,8 @@ pub enum Error {
     IntoRawMode { source: std::io::Error },
 }
 
-pub fn spawn(line: &str) -> Result<RunningProcess, Error> {
-    RunningProcess::new(line)
-}
-
-pub enum ProcessEvent {
-    Output(Vec<u8>),
-    Exit(std::process::ExitStatus),
+pub fn spawn(cmd: &str, args: &[String]) -> Result<RunningProcess, Error> {
+    RunningProcess::new(cmd, args)
 }
 
 pub struct RunningProcess {
@@ -62,14 +51,12 @@ pub struct RunningProcess {
 }
 
 impl RunningProcess {
-    fn new(line: &str) -> Result<Self, Error> {
+    fn new(cmd: &str, args: &[String]) -> Result<Self, Error> {
         let pty =
             tokio_pty_process::AsyncPtyMaster::open().context(OpenPty)?;
 
-        let (cmd, args) =
-            crate::parser::parse(line).context(ParserError { line })?;
-        let process = std::process::Command::new(cmd.clone())
-            .args(&args)
+        let process = std::process::Command::new(cmd)
+            .args(args)
             .spawn_pty_async(&pty)
             .context(SpawnProcess { cmd })?;
 
@@ -92,7 +79,7 @@ impl RunningProcess {
 
 #[must_use = "streams do nothing unless polled"]
 impl futures::stream::Stream for RunningProcess {
-    type Item = ProcessEvent;
+    type Item = crate::eval::CommandEvent;
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
@@ -141,7 +128,7 @@ impl futures::stream::Stream for RunningProcess {
                             acc
                         });
                     return Ok(futures::Async::Ready(Some(
-                        ProcessEvent::Output(bytes),
+                        crate::eval::CommandEvent::Output(bytes),
                     )));
                 }
                 Ok(futures::Async::NotReady) => {
@@ -162,7 +149,7 @@ impl futures::stream::Stream for RunningProcess {
                 Ok(futures::Async::Ready(status)) => {
                     self.exit_done = true;
                     return Ok(futures::Async::Ready(Some(
-                        ProcessEvent::Exit(status),
+                        crate::eval::CommandEvent::ProcessExit(status),
                     )));
                 }
                 Ok(futures::Async::NotReady) => {

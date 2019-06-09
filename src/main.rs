@@ -1,3 +1,5 @@
+mod builtins;
+mod eval;
 mod parser;
 mod process;
 mod readline;
