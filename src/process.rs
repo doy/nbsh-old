@@ -6,6 +6,7 @@ use tokio_pty_process::CommandExt;
 #[derive(Debug)]
 pub enum Error {
     IOError(std::io::Error),
+    ParserError(crate::parser::Error),
 }
 
 pub fn spawn(line: &str) -> Result<RunningProcess, Error> {
@@ -34,10 +35,10 @@ impl RunningProcess {
         let pty = tokio_pty_process::AsyncPtyMaster::open()
             .map_err(|e| Error::IOError(e))?;
 
-        let mut argv: Vec<_> = line.split(' ').collect();
-        let cmd = argv.remove(0);
+        let (cmd, args) =
+            crate::parser::parse(line).map_err(|e| Error::ParserError(e))?;
         let process = std::process::Command::new(cmd)
-            .args(&argv)
+            .args(&args)
             .spawn_pty_async(&pty)
             .map_err(|e| Error::IOError(e))?;
 

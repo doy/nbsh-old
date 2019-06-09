@@ -1,3 +1,4 @@
+mod parser;
 mod process;
 mod readline;
 mod repl;

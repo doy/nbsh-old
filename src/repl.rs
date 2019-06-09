@@ -42,6 +42,11 @@ pub fn repl() {
             Err(Error::ReadError(crate::readline::Error::EOF)) => {
                 return Ok((done, true));
             }
+            Err(Error::EvalError(crate::process::Error::ParserError(
+                crate::parser::Error::CommandRequired,
+            ))) => {
+                return Ok((done, false));
+            }
             Err(e) => {
                 let stderr = std::io::stderr();
                 let mut stderr = stderr.lock();
