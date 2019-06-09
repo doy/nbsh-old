@@ -17,6 +17,7 @@ struct ReadlineState {
     echo: bool,
 
     buffer: String,
+    cursor: usize,
     wrote_prompt: bool,
 }
 
@@ -30,6 +31,7 @@ impl Readline {
                 prompt: prompt.to_string(),
                 echo,
                 buffer: String::new(),
+                cursor: 0,
                 wrote_prompt: false,
             },
             _raw_screen: screen,
@@ -57,24 +59,34 @@ impl ReadlineState {
     ) -> std::result::Result<futures::Async<String>, Error> {
         match event {
             crossterm::KeyEvent::Char(c) => {
-                self.echo(c).map_err(|e| Error::IOError(e))?;
+                self.echo_char(c).map_err(|e| Error::IOError(e))?;
 
                 if c == '\n' {
                     return Ok(futures::Async::Ready(self.buffer.clone()));
                 }
-                self.buffer.push(c);
+                self.buffer.insert(self.cursor, c);
+                self.cursor += 1;
             }
             crossterm::KeyEvent::Ctrl(c) => {
                 if c == 'd' {
                     if self.buffer.is_empty() {
-                        self.echo('\n').map_err(|e| Error::IOError(e))?;
+                        self.echo_char('\n')
+                            .map_err(|e| Error::IOError(e))?;
                         return Err(Error::EOF);
                     }
                 }
                 if c == 'c' {
                     self.buffer = String::new();
-                    self.echo('\n').map_err(|e| Error::IOError(e))?;
+                    self.cursor = 0;
+                    self.echo_char('\n').map_err(|e| Error::IOError(e))?;
                     self.prompt().map_err(|e| Error::IOError(e))?;
+                }
+            }
+            crossterm::KeyEvent::Backspace => {
+                if self.cursor != 0 {
+                    self.cursor -= 1;
+                    self.buffer.remove(self.cursor);
+                    self.echo(b"\x08 \x08").map_err(|e| Error::IOError(e))?;
                 }
             }
             _ => {}
@@ -93,18 +105,27 @@ impl ReadlineState {
         self.write(self.prompt.as_bytes())
     }
 
-    fn echo(&self, c: char) -> std::io::Result<()> {
-        if c == '\n' {
-            self.write(b"\r\n")?;
-            return Ok(());
-        }
+    fn echo(&self, bytes: &[u8]) -> std::io::Result<()> {
+        let bytes: Vec<_> = bytes
+            .iter()
+            // replace \n with \r\n
+            .fold(vec![], |mut acc, &c| {
+                if c == b'\n' {
+                    acc.push(b'\r');
+                    acc.push(b'\n');
+                } else {
+                    if self.echo {
+                        acc.push(c);
+                    }
+                }
+                acc
+            });
+        self.write(&bytes)
+    }
 
-        if !self.echo {
-            return Ok(());
-        }
-
+    fn echo_char(&self, c: char) -> std::io::Result<()> {
         let mut buf = [0u8; 4];
-        self.write(c.encode_utf8(&mut buf[..]).as_bytes())
+        self.echo(c.encode_utf8(&mut buf[..]).as_bytes())
     }
 }
 
