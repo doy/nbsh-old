@@ -1,15 +1,35 @@
-use snafu::{ResultExt, Snafu};
+use snafu::{ensure, OptionExt, ResultExt, Snafu};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("unknown builtin {}", cmd))]
     UnknownBuiltin { cmd: String },
 
+    #[snafu(display(
+        "not enough parameters for {} (got {}, expected {})",
+        cmd, args.len(), expected
+    ))]
+    NotEnoughParams {
+        cmd: String,
+        args: Vec<String>,
+        expected: u32,
+    },
+
+    #[snafu(display(
+        "too many parameters for {} (got {}, expected {})",
+        cmd, args.len(), expected
+    ))]
+    TooManyParams {
+        cmd: String,
+        args: Vec<String>,
+        expected: u32,
+    },
+
     #[snafu(display("failed to cd to {}: {}", dir, source))]
     Chdir { dir: String, source: nix::Error },
 
-    #[snafu(display("cd requires a directory to be given"))]
-    ChdirParams,
+    #[snafu(display("failed to cd: $HOME not set"))]
+    ChdirUnknownHome,
 }
 
 pub fn exec(cmd: &str, args: &[String]) -> Result<Builtin, Error> {
@@ -63,9 +83,20 @@ impl futures::stream::Stream for Builtin {
 }
 
 fn cd(args: &[String]) -> Result<(), Error> {
-    if let Some(dir) = args.get(0) {
-        nix::unistd::chdir(dir.as_str()).context(Chdir { dir: dir.clone() })
+    ensure!(
+        args.len() <= 1,
+        TooManyParams {
+            cmd: "cd",
+            args,
+            expected: 1u32,
+        }
+    );
+    let dir = if let Some(dir) = args.get(0) {
+        std::convert::From::from(dir)
     } else {
-        Err(Error::ChdirParams)
-    }
+        std::env::var_os("HOME").context(ChdirUnknownHome)?
+    };
+    nix::unistd::chdir(dir.as_os_str()).context(Chdir {
+        dir: dir.to_string_lossy(),
+    })
 }
