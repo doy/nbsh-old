@@ -130,17 +130,15 @@ impl ReadlineState {
                 }
             }
             crossterm::KeyEvent::Left => {
-                let cursor = 0.max(self.cursor - 1);
-                if cursor != self.cursor {
+                if self.cursor != 0 {
+                    self.cursor -= 1;
                     self.write(b"\x1b[D").context(WriteToTerminal)?;
-                    self.cursor = cursor;
                 }
             }
             crossterm::KeyEvent::Right => {
-                let cursor = self.buffer.len().min(self.cursor + 1);
-                if cursor != self.cursor {
+                if self.cursor != self.buffer.len() {
+                    self.cursor += 1;
                     self.write(b"\x1b[C").context(WriteToTerminal)?;
-                    self.cursor = cursor;
                 }
             }
             _ => {}
