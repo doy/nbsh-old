@@ -16,25 +16,26 @@ pub fn repl() {
         }
 
         let repl = read().and_then(|line| {
-            eval(&line).and_then(|(out, status)| {
-                out
-                    // print the results as they come in
-                    .and_then(|out| print(&out))
-                    // wait for all output to be finished
-                    .collect()
-                    // ignore io errors since we just keep reading even after
-                    // the process exits and the other end of the pty is
-                    // closed
-                    .or_else(|_| futures::future::ok(vec![]))
-                    // once the output is all processed, then wait on the
-                    // process to exit
-                    .and_then(|_| status)
+            eval(&line).fold(None, |acc, event| match event {
+                crate::process::ProcessEvent::Output(out) => {
+                    match print(&out) {
+                        Ok(()) => futures::future::ok(acc),
+                        Err(e) => futures::future::err(e),
+                    }
+                }
+                crate::process::ProcessEvent::Exit(status) => {
+                    futures::future::ok(Some(status))
+                }
             })
         });
 
         Some(repl.then(move |res| match res {
-            Ok(status) => {
+            Ok(Some(status)) => {
                 eprint!("process exited with status {}\r\n", status);
+                return Ok((done, false));
+            }
+            Ok(None) => {
+                eprint!("process exited weirdly?\r\n");
                 return Ok((done, false));
             }
             Err(Error::ReadError(crate::readline::Error::EOF)) => {
@@ -58,24 +59,12 @@ fn read() -> impl futures::future::Future<Item = String, Error = Error> {
 
 fn eval(
     line: &str,
-) -> impl futures::future::Future<
-    Item = (
-        impl futures::stream::Stream<Item = Vec<u8>, Error = Error>,
-        impl futures::future::Future<
-            Item = std::process::ExitStatus,
-            Error = Error,
-        >,
-    ),
-    Error = Error,
-> {
-    match crate::process::spawn(line) {
-        Ok((out, status)) => Ok((
-            out.map_err(|e| Error::EvalError(e)),
-            status.map_err(|e| Error::EvalError(e)),
-        )),
-        Err(e) => Err(e).map_err(|e| Error::EvalError(e)),
-    }
-    .into_future()
+) -> impl futures::stream::Stream<Item = crate::process::ProcessEvent, Error = Error>
+{
+    crate::process::spawn(line)
+        .into_future()
+        .flatten_stream()
+        .map_err(|e| Error::EvalError(e))
 }
 
 fn print(out: &[u8]) -> Result<(), Error> {
