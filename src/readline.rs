@@ -22,7 +22,9 @@ pub enum Error {
     TerminalInputReadingThread { source: std::io::Error },
 }
 
-pub fn readline(prompt: &str, echo: bool) -> Result<Readline, Error> {
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub fn readline(prompt: &str, echo: bool) -> Result<Readline> {
     Readline::new(prompt, echo)
 }
 
@@ -42,7 +44,7 @@ struct ReadlineState {
 }
 
 impl Readline {
-    fn new(prompt: &str, echo: bool) -> Result<Self, Error> {
+    fn new(prompt: &str, echo: bool) -> Result<Self> {
         let screen =
             crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?;
 
@@ -59,9 +61,9 @@ impl Readline {
         })
     }
 
-    fn with_reader<F, T>(&mut self, f: F) -> Result<T, Error>
+    fn with_reader<F, T>(&mut self, f: F) -> Result<T>
     where
-        F: FnOnce(&KeyReader, &mut ReadlineState) -> Result<T, Error>,
+        F: FnOnce(&KeyReader, &mut ReadlineState) -> Result<T>,
     {
         let mut reader_opt = self.reader.take();
         if reader_opt.is_none() {
@@ -240,7 +242,7 @@ impl futures::future::Future for Readline {
 
         self.with_reader(|reader, state| {
             loop {
-                match reader.try_recv() {
+                match reader.events.try_recv() {
                     Ok(event) => {
                         let a = state.process_event(event)?;
                         if a.is_ready() {
@@ -266,7 +268,7 @@ struct KeyReader {
 }
 
 impl KeyReader {
-    fn new(task: futures::task::Task) -> Result<Self, Error> {
+    fn new(task: futures::task::Task) -> Result<Self> {
         let reader = crossterm::input().read_sync();
         let (events_tx, events_rx) = std::sync::mpsc::channel();
         let (quit_tx, quit_rx) = std::sync::mpsc::channel();
@@ -297,12 +299,6 @@ impl KeyReader {
             events: events_rx,
             quit: quit_tx,
         })
-    }
-
-    fn try_recv(
-        &self,
-    ) -> Result<crossterm::InputEvent, std::sync::mpsc::TryRecvError> {
-        self.events.try_recv()
     }
 }
 

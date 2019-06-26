@@ -28,7 +28,9 @@ pub enum Error {
     },
 }
 
-pub fn eval(line: &str) -> Result<Eval, Error> {
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub fn eval(line: &str) -> Result<Eval> {
     Eval::new(line)
 }
 
@@ -46,7 +48,7 @@ pub struct Eval {
 }
 
 impl Eval {
-    fn new(line: &str) -> Result<Self, Error> {
+    fn new(line: &str) -> Result<Self> {
         let (cmd, args) =
             crate::parser::parse(line).context(ParserError { line })?;
         let builtin_stream = crate::builtins::exec(&cmd, &args);

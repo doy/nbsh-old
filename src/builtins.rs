@@ -32,7 +32,9 @@ pub enum Error {
     ChdirUnknownHome,
 }
 
-pub fn exec(cmd: &str, args: &[String]) -> Result<Builtin, Error> {
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub fn exec(cmd: &str, args: &[String]) -> Result<Builtin> {
     Builtin::new(cmd, args)
 }
 
@@ -43,7 +45,7 @@ pub struct Builtin {
 }
 
 impl Builtin {
-    fn new(cmd: &str, args: &[String]) -> Result<Self, Error> {
+    fn new(cmd: &str, args: &[String]) -> Result<Self> {
         match cmd {
             "cd" => Ok(Builtin {
                 cmd: cmd.to_string(),
@@ -82,7 +84,7 @@ impl futures::stream::Stream for Builtin {
     }
 }
 
-fn cd(args: &[String]) -> Result<(), Error> {
+fn cd(args: &[String]) -> Result<()> {
     ensure!(
         args.len() <= 1,
         TooManyParams {

@@ -4,7 +4,7 @@ use snafu::{ResultExt, Snafu};
 use std::io::Write;
 
 #[derive(Debug, Snafu)]
-enum Error {
+pub enum Error {
     #[snafu(display("error during read: {}", source))]
     ReadError { source: crate::readline::Error },
 
@@ -14,6 +14,8 @@ enum Error {
     #[snafu(display("error during print: {}", source))]
     PrintError { source: std::io::Error },
 }
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn repl() {
     let loop_stream = futures::stream::unfold(false, |done| {
@@ -90,7 +92,7 @@ fn eval(
         .map_err(|e| Error::EvalError { source: e })
 }
 
-fn print(out: &[u8]) -> Result<(), Error> {
+fn print(out: &[u8]) -> Result<()> {
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
     stdout.write(out).context(PrintError)?;

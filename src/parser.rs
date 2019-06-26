@@ -6,7 +6,9 @@ pub enum Error {
     CommandRequired,
 }
 
-pub fn parse(line: &str) -> Result<(String, Vec<String>), Error> {
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub fn parse(line: &str) -> Result<(String, Vec<String>)> {
     // TODO
     let mut tokens = line.split_whitespace().map(|s| s.to_string());
     let cmd = tokens.next().context(CommandRequired)?;

@@ -34,7 +34,9 @@ pub enum Error {
     IntoRawMode { source: std::io::Error },
 }
 
-pub fn spawn(cmd: &str, args: &[String]) -> Result<RunningProcess, Error> {
+pub type Result<T> = std::result::Result<T, Error>;
+
+pub fn spawn(cmd: &str, args: &[String]) -> Result<RunningProcess> {
     RunningProcess::new(cmd, args)
 }
 
@@ -51,7 +53,7 @@ pub struct RunningProcess {
 }
 
 impl RunningProcess {
-    fn new(cmd: &str, args: &[String]) -> Result<Self, Error> {
+    fn new(cmd: &str, args: &[String]) -> Result<Self> {
         let pty =
             tokio_pty_process::AsyncPtyMaster::open().context(OpenPty)?;
 
