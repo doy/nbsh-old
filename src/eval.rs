@@ -4,13 +4,13 @@ use snafu::{ResultExt, Snafu};
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("failed to parse command line '{}': {}", line, source))]
-    ParserError {
+    Parser {
         line: String,
         source: crate::parser::Error,
     },
 
     #[snafu(display("failed to find command `{}`: {}", cmd, source))]
-    CommandError {
+    Command {
         cmd: String,
         source: crate::process::Error,
     },
@@ -50,7 +50,7 @@ pub struct Eval {
 impl Eval {
     fn new(line: &str) -> Result<Self> {
         let (cmd, args) =
-            crate::parser::parse(line).context(ParserError { line })?;
+            crate::parser::parse(line).context(Parser { line })?;
         let builtin_stream = crate::builtins::exec(&cmd, &args);
         let stream: Box<
             dyn futures::stream::Stream<Item = CommandEvent, Error = Error>
@@ -69,10 +69,10 @@ impl Eval {
                         source: e,
                     }))
                 }
-                Err(e) => return Err(e).context(CommandError { cmd }),
+                Err(e) => return Err(e).context(Command { cmd }),
             }
         };
-        Ok(Eval { stream })
+        Ok(Self { stream })
     }
 }
 

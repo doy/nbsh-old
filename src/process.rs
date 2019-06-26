@@ -66,7 +66,7 @@ impl RunningProcess {
         // let input = tokio::io::stdin();
         let input = tokio::reactor::PollEvented2::new(EventedStdin);
 
-        Ok(RunningProcess {
+        Ok(Self {
             pty,
             process,
             input,

@@ -3,6 +3,12 @@ name = "nbsh"
 version = "0.1.0"
 authors = ["Jesse Luehrs <doy@tozt.net>"]
 edition = "2018"
+description = "experimental interactive shell"
+license = "MIT"
+repository = "https://git.tozt.net/nbsh"
+readme = "README.md"
+keywords = ["shell", "terminal"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 crossterm = "0.9"

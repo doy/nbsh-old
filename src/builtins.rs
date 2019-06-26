@@ -47,7 +47,7 @@ pub struct Builtin {
 impl Builtin {
     fn new(cmd: &str, args: &[String]) -> Result<Self> {
         match cmd {
-            "cd" => Ok(Builtin {
+            "cd" => Ok(Self {
                 cmd: cmd.to_string(),
                 args: args.to_vec(),
                 done: false,
@@ -90,7 +90,7 @@ fn cd(args: &[String]) -> Result<()> {
         TooManyParams {
             cmd: "cd",
             args,
-            expected: 1u32,
+            expected: 1_u32,
         }
     );
     let dir = if let Some(dir) = args.get(0) {

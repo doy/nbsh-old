@@ -48,7 +48,7 @@ impl Readline {
         let screen =
             crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?;
 
-        Ok(Readline {
+        Ok(Self {
             reader: None,
             state: ReadlineState {
                 prompt: prompt.to_string(),
@@ -82,18 +82,19 @@ impl ReadlineState {
     ) -> std::result::Result<futures::Async<String>, Error> {
         match event {
             crossterm::InputEvent::Keyboard(e) => {
-                return self.process_keyboard_event(e)
+                return self.process_keyboard_event(&e)
             }
             _ => {}
         }
-        return Ok(futures::Async::NotReady);
+
+        Ok(futures::Async::NotReady)
     }
 
     fn process_keyboard_event(
         &mut self,
-        event: crossterm::KeyEvent,
+        event: &crossterm::KeyEvent,
     ) -> std::result::Result<futures::Async<String>, Error> {
-        match event {
+        match *event {
             crossterm::KeyEvent::Char(c) => {
                 if self.cursor != self.buffer.len() && c != '\n' {
                     self.echo(b"\x1b[@").context(WriteToTerminal)?;
@@ -191,13 +192,14 @@ impl ReadlineState {
             }
             _ => {}
         }
-        return Ok(futures::Async::NotReady);
+
+        Ok(futures::Async::NotReady)
     }
 
     fn write(&self, buf: &[u8]) -> std::io::Result<()> {
         let stdout = std::io::stdout();
         let mut stdout = stdout.lock();
-        stdout.write(buf)?;
+        stdout.write_all(buf)?;
         stdout.flush()
     }
 
@@ -224,7 +226,7 @@ impl ReadlineState {
     }
 
     fn echo_char(&self, c: char) -> std::io::Result<()> {
-        let mut buf = [0u8; 4];
+        let mut buf = [0_u8; 4];
         self.echo(c.encode_utf8(&mut buf[..]).as_bytes())
     }
 }
@@ -288,14 +290,14 @@ impl KeyReader {
                     if newline {
                         break;
                     }
-                    if let Ok(_) = quit_rx.try_recv() {
+                    if quit_rx.try_recv().is_ok() {
                         break;
                     }
                 }
             })
             .context(TerminalInputReadingThread)?;
 
-        Ok(KeyReader {
+        Ok(Self {
             events: events_rx,
             quit: quit_tx,
         })
