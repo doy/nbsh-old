@@ -95,15 +95,15 @@ impl ReadlineState {
         event: &crossterm::KeyEvent,
     ) -> std::result::Result<futures::Async<String>, Error> {
         match *event {
+            crossterm::KeyEvent::Char('\n') => {
+                self.echo_char('\n').context(WriteToTerminal)?;
+                return Ok(futures::Async::Ready(self.buffer.clone()));
+            }
             crossterm::KeyEvent::Char(c) => {
-                if self.cursor != self.buffer.len() && c != '\n' {
+                if self.cursor != self.buffer.len() {
                     self.echo(b"\x1b[@").context(WriteToTerminal)?;
                 }
                 self.echo_char(c).context(WriteToTerminal)?;
-
-                if c == '\n' {
-                    return Ok(futures::Async::Ready(self.buffer.clone()));
-                }
                 self.buffer.insert(self.cursor, c);
                 self.cursor += 1;
             }
