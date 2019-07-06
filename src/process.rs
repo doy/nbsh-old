@@ -12,6 +12,9 @@ pub enum Error {
     #[snafu(display("failed to spawn process for `{}`: {}", cmd, source))]
     SpawnProcess { cmd: String, source: std::io::Error },
 
+    #[snafu(display("failed to resize pty: {}", source))]
+    ResizePty { source: std::io::Error },
+
     #[snafu(display("failed to write to pty: {}", source))]
     WriteToPty { source: std::io::Error },
 
@@ -55,6 +58,23 @@ pub struct RunningProcess {
     _screen: crossterm::RawScreen,
 }
 
+struct Resizer<'a, T> {
+    rows: u16,
+    cols: u16,
+    pty: &'a T,
+}
+
+impl<'a, T: tokio_pty_process::PtyMaster> futures::future::Future
+    for Resizer<'a, T>
+{
+    type Item = ();
+    type Error = std::io::Error;
+
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        self.pty.resize(self.rows, self.cols)
+    }
+}
+
 impl RunningProcess {
     fn new(cmd: &str, args: &[String]) -> Result<Self> {
         let pty =
@@ -64,6 +84,15 @@ impl RunningProcess {
             .args(args)
             .spawn_pty_async(&pty)
             .context(SpawnProcess { cmd })?;
+
+        let (cols, rows) = crossterm::terminal().terminal_size();
+        Resizer {
+            rows: rows + 1,
+            cols: cols + 1,
+            pty: &pty,
+        }
+        .wait()
+        .context(ResizePty)?;
 
         // TODO: tokio::io::stdin is broken (it's blocking)
         // let input = tokio::io::stdin();
