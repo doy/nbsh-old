@@ -24,54 +24,37 @@ pub fn repl() {
         }
 
         let repl = read().and_then(|line| {
-            eval(&line).fold(None, |acc, event| match event {
-                crate::eval::CommandEvent::CommandStart(cmd, args) => {
-                    eprint!("running '{} {:?}'\r\n", cmd, args);
-                    futures::future::ok(acc)
-                }
-                crate::eval::CommandEvent::Output(out) => match print(&out) {
-                    Ok(()) => futures::future::ok(acc),
-                    Err(e) => futures::future::err(e),
-                },
-                crate::eval::CommandEvent::ProcessExit(status) => {
-                    futures::future::ok(Some(format!("{}", status)))
-                }
-                crate::eval::CommandEvent::BuiltinExit => {
-                    futures::future::ok(Some("success".to_string()))
-                }
+            eval(&line).for_each(|event| {
+                futures::future::FutureResult::from(print(&event))
             })
         });
-
-        Some(repl.then(move |res| match res {
-            Ok(Some(status)) => {
-                eprint!("command exited: {}\r\n", status);
-                Ok((done, false))
-            }
-            Ok(None) => {
-                eprint!("command exited weirdly?\r\n");
-                Ok((done, false))
-            }
-            Err(Error::Read {
-                source: crate::readline::Error::EOF,
-            }) => Ok((done, true)),
-            Err(Error::Eval {
+        Some(repl.then(|res| match res {
+            // successful run or empty input means prompt again
+            Ok(_)
+            | Err(Error::Eval {
                 source:
                     crate::eval::Error::Parser {
                         source: crate::parser::Error::CommandRequired,
                         ..
                     },
-            }) => Ok((done, false)),
+            }) => Ok((false, false)),
+            // eof means we're done
+            Err(Error::Read {
+                source: crate::readline::Error::EOF,
+            }) => Ok((false, true)),
+            // any other errors should be displayed, then we prompt again
             Err(e) => {
                 let stderr = std::io::stderr();
                 let mut stderr = stderr.lock();
                 // panics seem fine for errors during error handling
                 write!(stderr, "{}\r\n", e).unwrap();
                 stderr.flush().unwrap();
-                Ok((done, false))
+                Ok((false, false))
             }
         }))
     });
-    tokio::run(loop_stream.collect().map(|_| ()));
+    let loop_future = loop_stream.collect().map(|_| ());
+    tokio::run(loop_future);
 }
 
 fn read() -> impl futures::future::Future<Item = String, Error = Error> {
@@ -91,9 +74,23 @@ fn eval(
         .map_err(|e| Error::Eval { source: e })
 }
 
-fn print(out: &[u8]) -> Result<()> {
-    let stdout = std::io::stdout();
-    let mut stdout = stdout.lock();
-    stdout.write(out).context(Print)?;
-    stdout.flush().context(Print)
+fn print(event: &crate::eval::CommandEvent) -> Result<()> {
+    match event {
+        crate::eval::CommandEvent::CommandStart(cmd, args) => {
+            eprint!("running '{} {:?}'\r\n", cmd, args);
+        }
+        crate::eval::CommandEvent::Output(out) => {
+            let stdout = std::io::stdout();
+            let mut stdout = stdout.lock();
+            stdout.write(out).context(Print)?;
+            stdout.flush().context(Print)?;
+        }
+        crate::eval::CommandEvent::ProcessExit(status) => {
+            eprint!("command exited: {}\r\n", status);
+        }
+        crate::eval::CommandEvent::BuiltinExit => {
+            eprint!("builtin exited\r\n");
+        }
+    }
+    Ok(())
 }
