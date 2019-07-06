@@ -126,7 +126,7 @@ impl ReadlineState {
                 'd' => {
                     if self.buffer.is_empty() {
                         self.echo_char('\n').context(WriteToTerminal)?;
-                        snafu::ensure!(false, EOF);
+                        return EOF.fail();
                     }
                 }
                 'e' => {
@@ -256,7 +256,7 @@ impl futures::future::Future for Readline {
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         // is EOF correct here?
-                        snafu::ensure!(false, EOF)
+                        return EOF.fail();
                     }
                 }
             }
