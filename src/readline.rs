@@ -1,7 +1,7 @@
-use snafu::{ensure, ResultExt, Snafu};
-use std::io::Write;
+use snafu::ResultExt as _;
+use std::io::Write as _;
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, snafu::Snafu)]
 pub enum Error {
     #[snafu(display("failed to write to the terminal: {}", source))]
     WriteToTerminal { source: std::io::Error },
@@ -126,7 +126,7 @@ impl ReadlineState {
                 'd' => {
                     if self.buffer.is_empty() {
                         self.echo_char('\n').context(WriteToTerminal)?;
-                        ensure!(false, EOF);
+                        snafu::ensure!(false, EOF);
                     }
                 }
                 'e' => {
@@ -256,7 +256,7 @@ impl futures::future::Future for Readline {
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         // is EOF correct here?
-                        ensure!(false, EOF)
+                        snafu::ensure!(false, EOF)
                     }
                 }
             }

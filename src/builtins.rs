@@ -1,6 +1,6 @@
-use snafu::{ensure, OptionExt, ResultExt, Snafu};
+use snafu::{OptionExt as _, ResultExt as _};
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, snafu::Snafu)]
 pub enum Error {
     #[snafu(display("unknown builtin {}", cmd))]
     UnknownBuiltin { cmd: String },
@@ -85,7 +85,7 @@ impl futures::stream::Stream for Builtin {
 }
 
 fn cd(args: &[String]) -> Result<()> {
-    ensure!(
+    snafu::ensure!(
         args.len() <= 1,
         TooManyParams {
             cmd: "cd",

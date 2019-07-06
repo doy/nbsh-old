@@ -1,10 +1,10 @@
-use futures::future::Future;
-use snafu::{ResultExt, Snafu};
-use std::io::{Read, Write};
-use tokio::io::AsyncRead;
-use tokio_pty_process::CommandExt;
+use futures::future::Future as _;
+use snafu::ResultExt as _;
+use std::io::{Read as _, Write as _};
+use tokio::io::AsyncRead as _;
+use tokio_pty_process::CommandExt as _;
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, snafu::Snafu)]
 pub enum Error {
     #[snafu(display("failed to open a pty: {}", source))]
     OpenPty { source: std::io::Error },

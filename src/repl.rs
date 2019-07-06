@@ -1,9 +1,9 @@
-use futures::future::{Future, IntoFuture};
-use futures::stream::Stream;
-use snafu::{ResultExt, Snafu};
-use std::io::Write;
+use futures::future::{Future as _, IntoFuture as _};
+use futures::stream::Stream as _;
+use snafu::ResultExt as _;
+use std::io::Write as _;
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, snafu::Snafu)]
 pub enum Error {
     #[snafu(display("error during read: {}", source))]
     Read { source: crate::readline::Error },

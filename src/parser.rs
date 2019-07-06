@@ -1,6 +1,6 @@
-use snafu::{OptionExt, Snafu};
+use snafu::OptionExt as _;
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, snafu::Snafu)]
 pub enum Error {
     #[snafu(display("No command given"))]
     CommandRequired,

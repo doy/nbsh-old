@@ -1,7 +1,7 @@
-use futures::stream::Stream;
-use snafu::{ResultExt, Snafu};
+use futures::stream::Stream as _;
+use snafu::ResultExt as _;
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, snafu::Snafu)]
 pub enum Error {
     #[snafu(display("failed to parse command line '{}': {}", line, source))]
     Parser {
