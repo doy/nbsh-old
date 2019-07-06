@@ -3,6 +3,7 @@
 // clippy::cargo seems to be broken with rls currently
 // #![warn(clippy::cargo)]
 #![allow(clippy::collapsible_if)]
+#![allow(clippy::if_not_else)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::multiple_crate_versions)]
 #![allow(clippy::single_match)]

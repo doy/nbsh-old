@@ -35,6 +35,7 @@ pub fn eval(line: &str) -> Result<Eval> {
 }
 
 pub enum CommandEvent {
+    CommandStart(String, Vec<String>),
     Output(Vec<u8>),
     ProcessExit(std::process::ExitStatus),
     BuiltinExit,

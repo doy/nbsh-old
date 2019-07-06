@@ -46,7 +46,10 @@ pub struct RunningProcess {
     // TODO: tokio::io::Stdin is broken
     // input: tokio::io::Stdin,
     input: tokio::reactor::PollEvented2<EventedStdin>,
+    cmd: String,
+    args: Vec<String>,
     buf: Vec<u8>,
+    started: bool,
     output_done: bool,
     exit_done: bool,
     _screen: crossterm::RawScreen,
@@ -70,7 +73,10 @@ impl RunningProcess {
             pty,
             process,
             input,
+            cmd: cmd.to_string(),
+            args: args.to_vec(),
             buf: Vec::with_capacity(4096),
+            started: false,
             output_done: false,
             exit_done: false,
             _screen: crossterm::RawScreen::into_raw_mode()
@@ -85,6 +91,16 @@ impl futures::stream::Stream for RunningProcess {
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        if !self.started {
+            self.started = true;
+            return Ok(futures::Async::Ready(Some(
+                crate::eval::CommandEvent::CommandStart(
+                    self.cmd.clone(),
+                    self.args.clone(),
+                ),
+            )));
+        }
+
         let ready = mio::Ready::readable();
         let input_poll = self.input.poll_read_ready(ready);
         match input_poll {

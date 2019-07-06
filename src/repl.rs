@@ -24,8 +24,11 @@ pub fn repl() {
         }
 
         let repl = read().and_then(|line| {
-            eprint!("running '{}'\r\n", line);
             eval(&line).fold(None, |acc, event| match event {
+                crate::eval::CommandEvent::CommandStart(cmd, args) => {
+                    eprint!("running '{} {:?}'\r\n", cmd, args);
+                    futures::future::ok(acc)
+                }
                 crate::eval::CommandEvent::Output(out) => match print(&out) {
                     Ok(()) => futures::future::ok(acc),
                     Err(e) => futures::future::err(e),

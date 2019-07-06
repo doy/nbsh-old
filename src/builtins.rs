@@ -41,6 +41,7 @@ pub fn exec(cmd: &str, args: &[String]) -> Result<Builtin> {
 pub struct Builtin {
     cmd: String,
     args: Vec<String>,
+    started: bool,
     done: bool,
 }
 
@@ -50,6 +51,7 @@ impl Builtin {
             "cd" => Ok(Self {
                 cmd: cmd.to_string(),
                 args: args.to_vec(),
+                started: false,
                 done: false,
             }),
             _ => Err(Error::UnknownBuiltin {
@@ -65,22 +67,30 @@ impl futures::stream::Stream for Builtin {
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        if self.done {
-            return Ok(futures::Async::Ready(None));
+        if !self.started {
+            self.started = true;
+            Ok(futures::Async::Ready(Some(
+                crate::eval::CommandEvent::CommandStart(
+                    self.cmd.clone(),
+                    self.args.clone(),
+                ),
+            )))
+        } else if !self.done {
+            self.done = true;
+            let res = match self.cmd.as_ref() {
+                "cd" => cd(&self.args),
+                _ => Err(Error::UnknownBuiltin {
+                    cmd: self.cmd.clone(),
+                }),
+            };
+            res.map(|_| {
+                futures::Async::Ready(Some(
+                    crate::eval::CommandEvent::BuiltinExit,
+                ))
+            })
+        } else {
+            Ok(futures::Async::Ready(None))
         }
-
-        self.done = true;
-        let res = match self.cmd.as_ref() {
-            "cd" => cd(&self.args),
-            _ => Err(Error::UnknownBuiltin {
-                cmd: self.cmd.clone(),
-            }),
-        };
-        res.map(|_| {
-            futures::Async::Ready(Some(
-                crate::eval::CommandEvent::BuiltinExit,
-            ))
-        })
     }
 }
 
