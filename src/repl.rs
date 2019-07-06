@@ -23,35 +23,37 @@ pub fn repl() {
             return None;
         }
 
-        let repl = read().and_then(|line| {
-            eval(&line).for_each(|event| {
-                futures::future::FutureResult::from(print(&event))
+        let repl = read()
+            .and_then(|line| {
+                eval(&line).for_each(|event| {
+                    futures::future::FutureResult::from(print(&event))
+                })
             })
-        });
-        Some(repl.then(|res| match res {
-            // successful run or empty input means prompt again
-            Ok(_)
-            | Err(Error::Eval {
-                source:
-                    crate::eval::Error::Parser {
-                        source: crate::parser::Error::CommandRequired,
-                        ..
-                    },
-            }) => Ok((false, false)),
-            // eof means we're done
-            Err(Error::Read {
-                source: crate::readline::Error::EOF,
-            }) => Ok((false, true)),
-            // any other errors should be displayed, then we prompt again
-            Err(e) => {
-                let stderr = std::io::stderr();
-                let mut stderr = stderr.lock();
-                // panics seem fine for errors during error handling
-                write!(stderr, "{}\r\n", e).unwrap();
-                stderr.flush().unwrap();
-                Ok((false, false))
-            }
-        }))
+            .then(|res| match res {
+                // successful run or empty input means prompt again
+                Ok(_)
+                | Err(Error::Eval {
+                    source:
+                        crate::eval::Error::Parser {
+                            source: crate::parser::Error::CommandRequired,
+                            ..
+                        },
+                }) => Ok((false, false)),
+                // eof means we're done
+                Err(Error::Read {
+                    source: crate::readline::Error::EOF,
+                }) => Ok((false, true)),
+                // any other errors should be displayed, then we prompt again
+                Err(e) => {
+                    let stderr = std::io::stderr();
+                    let mut stderr = stderr.lock();
+                    // panics seem fine for errors during error handling
+                    write!(stderr, "{}\r\n", e).unwrap();
+                    stderr.flush().unwrap();
+                    Ok((false, false))
+                }
+            });
+        Some(repl)
     });
     let loop_future = loop_stream.collect().map(|_| ());
     tokio::run(loop_future);
