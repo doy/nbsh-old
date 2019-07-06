@@ -4,6 +4,8 @@
 // #![warn(clippy::cargo)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::if_not_else)]
+// match_same_arms is buggy, doesn't notice differences due to match arm order
+#![allow(clippy::match_same_arms)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::multiple_crate_versions)]
 #![allow(clippy::single_match)]
