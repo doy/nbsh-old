@@ -87,11 +87,8 @@ fn print(event: &crate::eval::CommandEvent) -> Result<()> {
             stdout.write(out).context(Print)?;
             stdout.flush().context(Print)?;
         }
-        crate::eval::CommandEvent::ProcessExit(status) => {
+        crate::eval::CommandEvent::CommandExit(status) => {
             eprint!("command exited: {}\r\n", status);
-        }
-        crate::eval::CommandEvent::BuiltinExit => {
-            eprint!("builtin exited\r\n");
         }
     }
     Ok(())

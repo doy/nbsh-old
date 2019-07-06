@@ -1,4 +1,5 @@
 use snafu::{OptionExt as _, ResultExt as _};
+use std::os::unix::process::ExitStatusExt as _;
 
 #[derive(Debug, snafu::Snafu)]
 pub enum Error {
@@ -85,8 +86,18 @@ impl futures::stream::Stream for Builtin {
             };
             res.map(|_| {
                 futures::Async::Ready(Some(
-                    crate::eval::CommandEvent::BuiltinExit,
+                    crate::eval::CommandEvent::CommandExit(
+                        std::process::ExitStatus::from_raw(0),
+                    ),
                 ))
+            })
+            .or_else(|e| match e {
+                Error::UnknownBuiltin { .. } => Err(e),
+                _ => Ok(futures::Async::Ready(Some(
+                    crate::eval::CommandEvent::CommandExit(
+                        std::process::ExitStatus::from_raw(256),
+                    ),
+                ))),
             })
         } else {
             Ok(futures::Async::Ready(None))

@@ -167,7 +167,7 @@ impl futures::stream::Stream for RunningProcess {
                 Ok(futures::Async::Ready(status)) => {
                     self.exit_done = true;
                     return Ok(futures::Async::Ready(Some(
-                        crate::eval::CommandEvent::ProcessExit(status),
+                        crate::eval::CommandEvent::CommandExit(status),
                     )));
                 }
                 Ok(futures::Async::NotReady) => {
