@@ -99,6 +99,9 @@ impl ReadlineState {
                 self.echo_char('\n').context(WriteToTerminal)?;
                 return Ok(futures::Async::Ready(self.buffer.clone()));
             }
+            crossterm::KeyEvent::Char('\t') => {
+                // TODO
+            }
             crossterm::KeyEvent::Char(c) => {
                 if self.cursor != self.buffer.len() {
                     self.echo(b"\x1b[@").context(WriteToTerminal)?;
