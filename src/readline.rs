@@ -82,7 +82,7 @@ impl ReadlineState {
     ) -> std::result::Result<futures::Async<String>, Error> {
         match event {
             crossterm::InputEvent::Keyboard(e) => {
-                return self.process_keyboard_event(&e)
+                return self.process_keyboard_event(&e);
             }
             _ => {}
         }
@@ -252,7 +252,7 @@ impl futures::future::Future for Readline {
                         }
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        return Ok(futures::Async::NotReady)
+                        return Ok(futures::Async::NotReady);
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         // is EOF correct here?

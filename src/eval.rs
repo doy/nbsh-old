@@ -69,7 +69,9 @@ impl Eval {
                         source: e,
                     }))
                 }
-                Err(e) => return Err(e).context(Command { cmd }),
+                Err(e) => {
+                    return Err(e).context(Command { cmd });
+                }
             }
         };
         Ok(Self { stream })
