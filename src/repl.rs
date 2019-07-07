@@ -1,6 +1,5 @@
 use futures::future::{Future as _, IntoFuture as _};
 use futures::stream::Stream as _;
-use snafu::ResultExt as _;
 use std::io::Write as _;
 
 #[derive(Debug, snafu::Snafu)]
@@ -12,51 +11,58 @@ pub enum Error {
     Eval { source: crate::eval::Error },
 
     #[snafu(display("error during print: {}", source))]
-    Print { source: std::io::Error },
+    Print { source: crate::state::Error },
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
-
 pub fn repl() {
-    let loop_stream = futures::stream::unfold(false, |done| {
-        if done {
-            return None;
-        }
+    tokio::run(futures::lazy(|| {
+        let (w, r) = futures::sync::mpsc::channel(0);
 
-        let repl = read()
-            .and_then(|line| {
-                eval(&line).for_each(|event| {
-                    futures::future::FutureResult::from(print(&event))
-                })
-            })
-            .then(|res| match res {
-                // successful run or empty input means prompt again
-                Ok(_)
-                | Err(Error::Eval {
-                    source:
-                        crate::eval::Error::Parser {
-                            source: crate::parser::Error::CommandRequired,
-                            ..
-                        },
-                }) => Ok((false, false)),
-                // eof means we're done
-                Err(Error::Read {
-                    source: crate::readline::Error::EOF,
-                }) => Ok((false, true)),
-                // any other errors should be displayed, then we prompt again
-                Err(e) => {
-                    let stderr = std::io::stderr();
-                    let mut stderr = stderr.lock();
-                    // panics seem fine for errors during error handling
-                    write!(stderr, "{}\r\n", e).unwrap();
-                    stderr.flush().unwrap();
-                    Ok((false, false))
+        let state_stream = crate::state::State::new(r).map_err(|e| {
+            error(&Error::Print { source: e });
+        });
+        tokio::spawn(state_stream.collect().map(|_| ()));
+
+        let loop_stream =
+            futures::stream::unfold((false, 0), move |(done, idx)| {
+                if done {
+                    return None;
                 }
+                let w = w.clone();
+
+                let repl = read()
+                    .and_then(move |line| {
+                        eval(&line).for_each(move |event| {
+                            let w = w.clone();
+                            print(w, idx, &event)
+                        })
+                    })
+                    .then(move |res| match res {
+                        // successful run or empty input means prompt again
+                        Ok(_)
+                        | Err(Error::Eval {
+                            source:
+                                crate::eval::Error::Parser {
+                                    source:
+                                        crate::parser::Error::CommandRequired,
+                                    ..
+                                },
+                        }) => Ok(((false, idx + 1), (false, idx + 1))),
+                        // eof means we're done
+                        Err(Error::Read {
+                            source: crate::readline::Error::EOF,
+                        }) => Ok(((false, idx + 1), (true, idx + 1))),
+                        // any other errors should be displayed, then we
+                        // prompt again
+                        Err(e) => {
+                            error(&e);
+                            Ok(((false, idx + 1), (false, idx + 1)))
+                        }
+                    });
+                Some(repl)
             });
-        Some(repl)
-    });
-    let loop_future = loop_stream.collect().map(|_| ());
-    tokio::run(loop_future);
+        loop_stream.collect().map(|_| ())
+    }));
 }
 
 fn read() -> impl futures::future::Future<Item = String, Error = Error> {
@@ -76,20 +82,19 @@ fn eval(
         .map_err(|e| Error::Eval { source: e })
 }
 
-fn print(event: &crate::eval::CommandEvent) -> Result<()> {
-    match event {
-        crate::eval::CommandEvent::CommandStart(cmd, args) => {
-            eprint!("running '{} {:?}'\r\n", cmd, args);
-        }
-        crate::eval::CommandEvent::Output(out) => {
-            let stdout = std::io::stdout();
-            let mut stdout = stdout.lock();
-            stdout.write(out).context(Print)?;
-            stdout.flush().context(Print)?;
-        }
-        crate::eval::CommandEvent::CommandExit(status) => {
-            eprint!("command exited: {}\r\n", status);
-        }
-    }
-    Ok(())
+fn print(
+    w: futures::sync::mpsc::Sender<crate::state::StateEvent>,
+    idx: usize,
+    event: &crate::eval::CommandEvent,
+) -> impl futures::future::Future<Item = (), Error = Error> {
+    crate::state::update(w, idx, event)
+        .map_err(|e| Error::Print { source: e })
+}
+
+fn error(e: &Error) {
+    let stderr = std::io::stderr();
+    let mut stderr = stderr.lock();
+    // panics seem fine for errors during error handling
+    write!(stderr, "{}\r\n", e).unwrap();
+    stderr.flush().unwrap();
 }
