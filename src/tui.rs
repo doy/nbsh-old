@@ -11,9 +11,6 @@ pub enum Error {
     #[snafu(display("error during eval: {}", source))]
     Eval { source: crate::eval::Error },
 
-    #[snafu(display("error during print: {}", source))]
-    Print { source: crate::state::Error },
-
     #[snafu(display("error during sending: {}", source))]
     Sending {
         source: futures::sync::mpsc::SendError<crate::state::StateEvent>,
@@ -29,9 +26,9 @@ pub fn tui() {
     tokio::run(futures::lazy(|| {
         let (w, r) = futures::sync::mpsc::channel(0);
 
-        tokio::spawn(crate::state::State::new(r).map_err(|e| {
-            error(&Error::Print { source: e });
-        }));
+        tokio::spawn(
+            crate::state::State::new(r).map_err(|()| unreachable!()),
+        );
 
         futures::future::loop_fn(0, move |idx| {
             let w = w.clone();

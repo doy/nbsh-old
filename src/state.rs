@@ -104,13 +104,8 @@ impl State {
         eprint!("command exited: {}\r\n", status);
         Ok(())
     }
-}
 
-impl futures::future::Future for State {
-    type Item = ();
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+    fn poll_with_errors(&mut self) -> futures::Poll<(), Error> {
         loop {
             let mut did_work = false;
 
@@ -170,6 +165,22 @@ impl futures::future::Future for State {
 
             if !did_work {
                 return Ok(futures::Async::NotReady);
+            }
+        }
+    }
+}
+
+impl futures::future::Future for State {
+    type Item = ();
+    type Error = ();
+
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        loop {
+            match self.poll_with_errors() {
+                Ok(a) => return Ok(a),
+                Err(e) => {
+                    eprint!("error polling state: {}\r\n", e);
+                }
             }
         }
     }
