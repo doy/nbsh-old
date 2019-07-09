@@ -16,9 +16,6 @@ pub enum Error {
 
     #[snafu(display("error printing output: {}", source))]
     PrintOutput { source: std::io::Error },
-
-    #[snafu(display("this error should not be possible"))]
-    Unreachable,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -103,7 +100,7 @@ impl futures::future::Future for State {
             let event = futures::try_ready!(self
                 .r
                 .poll()
-                .map_err(|_| Error::Unreachable));
+                .map_err(|_| unreachable!()));
             match event {
                 Some(StateEvent::Start(idx, cmd, args)) => {
                     self.command_start(idx, &cmd, &args)?;
