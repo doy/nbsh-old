@@ -13,7 +13,6 @@ fn main() {
             child
                 .map(|status| {
                     eprintln!("got status {}", status);
-                    ()
                 })
                 .map_err(|_| ()),
         )
