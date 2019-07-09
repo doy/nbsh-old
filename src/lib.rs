@@ -16,9 +16,7 @@ mod eval;
 mod parser;
 mod process;
 mod readline;
-mod repl;
 mod state;
 
-fn main() {
-    repl::repl();
-}
+pub mod repl;
+pub mod tui;

@@ -1,5 +1,6 @@
 use futures::future::{Future as _, IntoFuture as _};
 use futures::stream::Stream as _;
+use snafu::ResultExt as _;
 use std::io::Write as _;
 
 #[derive(Debug, snafu::Snafu)]
@@ -11,50 +12,41 @@ pub enum Error {
     Eval { source: crate::eval::Error },
 
     #[snafu(display("error during print: {}", source))]
-    Print { source: crate::state::Error },
+    Print { source: std::io::Error },
 }
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 pub fn repl() {
-    tokio::run(futures::lazy(|| {
-        let (w, r) = futures::sync::mpsc::channel(0);
-
-        tokio::spawn(crate::state::State::new(r).map_err(|e| {
-            error(&Error::Print { source: e });
-        }));
-
-        futures::future::loop_fn(0, move |idx| {
-            let w = w.clone();
-            read()
-                .and_then(move |line| {
-                    let w = w.clone();
-                    eval(&line).for_each(move |event| {
-                        let w = w.clone();
-                        print(w, idx, &event)
-                    })
-                })
-                .then(move |res| match res {
-                    // successful run or empty input means prompt again
-                    Ok(_)
-                    | Err(Error::Eval {
-                        source:
-                            crate::eval::Error::Parser {
-                                source: crate::parser::Error::CommandRequired,
-                                ..
-                            },
-                    }) => Ok(futures::future::Loop::Continue(idx + 1)),
-                    // eof means we're done
-                    Err(Error::Read {
-                        source: crate::readline::Error::EOF,
-                    }) => Ok(futures::future::Loop::Break(())),
-                    // any other errors should be displayed, then we
-                    // prompt again
-                    Err(e) => {
-                        error(&e);
-                        Ok(futures::future::Loop::Continue(idx + 1))
-                    }
-                })
-        })
-    }));
+    tokio::run(futures::future::loop_fn((), |_| {
+        read()
+            .and_then(|line| eval(&line).for_each(|event| print(&event)))
+            .then(|res| match res {
+                // successful run or empty input means prompt again
+                Ok(_)
+                | Err(Error::Eval {
+                    source:
+                        crate::eval::Error::Parser {
+                            source: crate::parser::Error::CommandRequired,
+                            ..
+                        },
+                }) => Ok(futures::future::Loop::Continue(())),
+                // eof means we're done
+                Err(Error::Read {
+                    source: crate::readline::Error::EOF,
+                }) => Ok(futures::future::Loop::Break(())),
+                // any other errors should be displayed, then we
+                // prompt again
+                Err(e) => {
+                    let stderr = std::io::stderr();
+                    let mut stderr = stderr.lock();
+                    // panics seem fine for errors during error handling
+                    write!(stderr, "{}\r\n", e).unwrap();
+                    stderr.flush().unwrap();
+                    Ok(futures::future::Loop::Continue(()))
+                }
+            })
+    }))
 }
 
 fn read() -> impl futures::future::Future<Item = String, Error = Error> {
@@ -74,19 +66,16 @@ fn eval(
         .map_err(|e| Error::Eval { source: e })
 }
 
-fn print(
-    w: futures::sync::mpsc::Sender<crate::state::StateEvent>,
-    idx: usize,
-    event: &crate::eval::CommandEvent,
-) -> impl futures::future::Future<Item = (), Error = Error> {
-    crate::state::update(w, idx, event)
-        .map_err(|e| Error::Print { source: e })
-}
-
-fn error(e: &Error) {
-    let stderr = std::io::stderr();
-    let mut stderr = stderr.lock();
-    // panics seem fine for errors during error handling
-    write!(stderr, "{}\r\n", e).unwrap();
-    stderr.flush().unwrap();
+fn print(event: &crate::eval::CommandEvent) -> Result<()> {
+    match event {
+        crate::eval::CommandEvent::CommandStart(_, _) => {}
+        crate::eval::CommandEvent::Output(out) => {
+            let stdout = std::io::stdout();
+            let mut stdout = stdout.lock();
+            stdout.write(out).context(Print)?;
+            stdout.flush().context(Print)?;
+        }
+        crate::eval::CommandEvent::CommandExit(_) => {}
+    }
+    Ok(())
 }
