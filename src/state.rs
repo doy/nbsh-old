@@ -100,7 +100,7 @@ impl futures::future::Future for State {
             let event = futures::try_ready!(self
                 .r
                 .poll()
-                .map_err(|_| unreachable!()));
+                .map_err(|_: ()| unreachable!()));
             match event {
                 Some(StateEvent::Start(idx, cmd, args)) => {
                     self.command_start(idx, &cmd, &args)?;
