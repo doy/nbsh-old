@@ -136,7 +136,7 @@ impl futures::future::Future for State {
                     .unwrap()
                     .future
                     .poll()
-                    .map_err(|e| Error::Eval { source: e })?
+                    .context(Eval)?
                 {
                     futures::Async::Ready(Some(event)) => match event {
                         crate::eval::CommandEvent::CommandStart(

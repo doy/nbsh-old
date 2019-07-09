@@ -15,6 +15,6 @@ crossterm = "0.9"
 futures = "0.1"
 mio = "0.6"
 nix = "0.14"
-snafu = "0.4"
+snafu = { version = "0.4", features = ["futures-01"] }
 tokio = "0.1"
 tokio-pty-process = "0.4"

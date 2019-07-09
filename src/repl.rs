@@ -1,5 +1,6 @@
 use futures::future::{Future as _, IntoFuture as _};
 use futures::stream::Stream as _;
+use snafu::futures01::{FutureExt as _, StreamExt as _};
 use snafu::ResultExt as _;
 use std::io::Write as _;
 
@@ -53,7 +54,7 @@ fn read() -> impl futures::future::Future<Item = String, Error = Error> {
     crate::readline::readline("$ ", true)
         .into_future()
         .flatten()
-        .map_err(|e| Error::Read { source: e })
+        .context(Read)
 }
 
 fn eval(
@@ -63,7 +64,7 @@ fn eval(
     crate::eval::eval(line)
         .into_future()
         .flatten_stream()
-        .map_err(|e| Error::Eval { source: e })
+        .context(Eval)
 }
 
 fn print(event: &crate::eval::CommandEvent) -> Result<()> {

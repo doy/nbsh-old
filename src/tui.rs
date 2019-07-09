@@ -1,5 +1,6 @@
 use futures::future::{Future as _, IntoFuture as _};
 use futures::sink::Sink as _;
+use snafu::futures01::FutureExt as _;
 use std::io::Write as _;
 
 #[derive(Debug, snafu::Snafu)]
@@ -38,10 +39,8 @@ pub fn tui() {
                 .and_then(move |line| {
                     let (res, req) = futures::sync::oneshot::channel();
                     w.send(crate::state::StateEvent::Line(idx, line, res))
-                        .map_err(|e| Error::Sending { source: e })
-                        .and_then(|_| {
-                            req.map_err(|e| Error::Receiving { source: e })
-                        })
+                        .context(Sending)
+                        .and_then(|_| req.context(Receiving))
                 })
                 .then(move |res| match res {
                     // successful run or empty input means prompt again
@@ -72,7 +71,7 @@ fn read() -> impl futures::future::Future<Item = String, Error = Error> {
     crate::readline::readline("$ ", true)
         .into_future()
         .flatten()
-        .map_err(|e| Error::Read { source: e })
+        .context(Read)
 }
 
 fn error(e: &Error) {

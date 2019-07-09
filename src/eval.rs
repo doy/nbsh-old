@@ -1,4 +1,4 @@
-use futures::stream::Stream as _;
+use snafu::futures01::StreamExt as _;
 use snafu::ResultExt as _;
 
 #[derive(Debug, snafu::Snafu)]
@@ -56,19 +56,11 @@ impl Eval {
             dyn futures::stream::Stream<Item = CommandEvent, Error = Error>
                 + Send,
         > = if let Ok(s) = builtin_stream {
-            Box::new(s.map_err(move |e| Error::BuiltinExecution {
-                cmd: cmd.clone(),
-                source: e,
-            }))
+            Box::new(s.context(BuiltinExecution { cmd }))
         } else {
             let process_stream = crate::process::spawn(&cmd, &args);
             match process_stream {
-                Ok(s) => {
-                    Box::new(s.map_err(move |e| Error::ProcessExecution {
-                        cmd: cmd.clone(),
-                        source: e,
-                    }))
-                }
+                Ok(s) => Box::new(s.context(ProcessExecution { cmd })),
                 Err(e) => {
                     return Err(e).context(Command { cmd });
                 }
