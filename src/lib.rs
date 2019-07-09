@@ -8,6 +8,7 @@
 #![allow(clippy::match_same_arms)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::multiple_crate_versions)]
+#![allow(clippy::similar_names)]
 #![allow(clippy::single_match)]
 #![allow(clippy::write_with_newline)]
 

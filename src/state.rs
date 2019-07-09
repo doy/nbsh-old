@@ -1,5 +1,3 @@
-use futures::future::Future as _;
-use futures::sink::Sink as _;
 use futures::stream::Stream as _;
 use snafu::{OptionExt as _, ResultExt as _};
 use std::io::Write as _;
@@ -16,18 +14,18 @@ pub enum Error {
 
     #[snafu(display("error printing output: {}", source))]
     PrintOutput { source: std::io::Error },
+
+    #[snafu(display("error during eval: {}", source))]
+    Eval { source: crate::eval::Error },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum StateEvent {
-    Start(usize, String, Vec<String>),
-    Output(usize, Vec<u8>),
-    Exit(usize, std::process::ExitStatus),
+    Line(usize, String, futures::sync::oneshot::Sender<()>),
 }
 
-#[derive(Debug)]
 pub struct State {
     r: futures::sync::mpsc::Receiver<StateEvent>,
     commands: std::collections::HashMap<usize, Command>,
@@ -41,19 +39,36 @@ impl State {
         }
     }
 
+    pub fn eval(
+        &mut self,
+        idx: usize,
+        line: &str,
+        res: futures::sync::oneshot::Sender<()>,
+    ) -> Result<()> {
+        snafu::ensure!(
+            !self.commands.contains_key(&idx),
+            InvalidCommandIndex { idx }
+        );
+        let eval = crate::eval::eval(line).context(Eval)?;
+        self.commands.insert(idx, Command::new(eval, res));
+        Ok(())
+    }
+
     pub fn command_start(
         &mut self,
         idx: usize,
         cmd: &str,
         args: &[String],
     ) -> Result<()> {
-        snafu::ensure!(
-            !self.commands.contains_key(&idx),
-            InvalidCommandIndex { idx }
-        );
-        let command = Command::new(cmd, args);
-        self.commands.insert(idx, command.clone());
-        eprint!("running '{} {:?}'\r\n", command.cmd, command.args);
+        let command = self
+            .commands
+            .get_mut(&idx)
+            .context(InvalidCommandIndex { idx })?;
+        let cmd = cmd.to_string();
+        let args = args.to_vec();
+        eprint!("running '{} {:?}'\r\n", cmd, args);
+        command.cmd = Some(cmd);
+        command.args = Some(args);
         Ok(())
     }
 
@@ -97,63 +112,88 @@ impl futures::future::Future for State {
 
     fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
         loop {
-            let event = futures::try_ready!(self
-                .r
-                .poll()
-                .map_err(|_: ()| unreachable!()));
-            match event {
-                Some(StateEvent::Start(idx, cmd, args)) => {
-                    self.command_start(idx, &cmd, &args)?;
+            let mut did_work = false;
+
+            match self.r.poll().map_err(|()| unreachable!())? {
+                futures::Async::Ready(Some(StateEvent::Line(
+                    idx,
+                    line,
+                    res,
+                ))) => {
+                    self.eval(idx, &line, res)?;
+                    did_work = true;
                 }
-                Some(StateEvent::Output(idx, output)) => {
-                    self.command_output(idx, &output)?;
+                futures::Async::Ready(None) => {
+                    return Ok(futures::Async::Ready(()));
                 }
-                Some(StateEvent::Exit(idx, status)) => {
-                    self.command_exit(idx, status)?;
+                futures::Async::NotReady => {}
+            }
+
+            for idx in self.commands.keys().cloned().collect::<Vec<usize>>() {
+                match self
+                    .commands
+                    .get_mut(&idx)
+                    .unwrap()
+                    .future
+                    .poll()
+                    .map_err(|e| Error::Eval { source: e })?
+                {
+                    futures::Async::Ready(Some(event)) => match event {
+                        crate::eval::CommandEvent::CommandStart(
+                            cmd,
+                            args,
+                        ) => {
+                            self.command_start(idx, &cmd, &args)?;
+                            did_work = true;
+                        }
+                        crate::eval::CommandEvent::Output(out) => {
+                            self.command_output(idx, &out)?;
+                            did_work = true;
+                        }
+                        crate::eval::CommandEvent::CommandExit(status) => {
+                            self.command_exit(idx, status)?;
+                            did_work = true;
+                        }
+                    },
+                    futures::Async::Ready(None) => {
+                        self.commands
+                            .remove(&idx)
+                            .context(InvalidCommandIndex { idx })?
+                            .res
+                            .send(())
+                            .map_err(|()| unreachable!())?;
+                        did_work = true;
+                    }
+                    futures::Async::NotReady => {}
                 }
-                None => return Ok(futures::Async::Ready(())),
+            }
+
+            if !did_work {
+                return Ok(futures::Async::NotReady);
             }
         }
     }
 }
 
-pub fn update(
-    w: futures::sync::mpsc::Sender<StateEvent>,
-    idx: usize,
-    event: &crate::eval::CommandEvent,
-) -> impl futures::future::Future<Item = (), Error = Error> {
-    match event {
-        crate::eval::CommandEvent::CommandStart(cmd, args) => {
-            w.send(crate::state::StateEvent::Start(
-                idx,
-                cmd.to_string(),
-                args.to_vec(),
-            ))
-        }
-        crate::eval::CommandEvent::Output(out) => {
-            w.send(crate::state::StateEvent::Output(idx, out.to_vec()))
-        }
-        crate::eval::CommandEvent::CommandExit(status) => {
-            w.send(crate::state::StateEvent::Exit(idx, *status))
-        }
-    }
-    .map(|_| ())
-    .map_err(|e| Error::Sending { source: e })
-}
-
-#[derive(Debug, Clone)]
 struct Command {
-    cmd: String,
-    args: Vec<String>,
+    future: crate::eval::Eval,
+    res: futures::sync::oneshot::Sender<()>,
+    cmd: Option<String>,
+    args: Option<Vec<String>>,
     output: Vec<u8>,
     status: Option<std::process::ExitStatus>,
 }
 
 impl Command {
-    fn new(cmd: &str, args: &[String]) -> Self {
+    fn new(
+        future: crate::eval::Eval,
+        res: futures::sync::oneshot::Sender<()>,
+    ) -> Self {
         Self {
-            cmd: cmd.to_string(),
-            args: args.to_vec(),
+            future,
+            res,
+            cmd: None,
+            args: None,
             output: vec![],
             status: None,
         }

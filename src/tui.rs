@@ -1,5 +1,5 @@
 use futures::future::{Future as _, IntoFuture as _};
-use futures::stream::Stream as _;
+use futures::sink::Sink as _;
 use std::io::Write as _;
 
 #[derive(Debug, snafu::Snafu)]
@@ -12,6 +12,16 @@ pub enum Error {
 
     #[snafu(display("error during print: {}", source))]
     Print { source: crate::state::Error },
+
+    #[snafu(display("error during sending: {}", source))]
+    Sending {
+        source: futures::sync::mpsc::SendError<crate::state::StateEvent>,
+    },
+
+    #[snafu(display("error during receiving: {}", source))]
+    Receiving {
+        source: futures::sync::oneshot::Canceled,
+    },
 }
 
 pub fn tui() {
@@ -26,11 +36,12 @@ pub fn tui() {
             let w = w.clone();
             read()
                 .and_then(move |line| {
-                    let w = w.clone();
-                    eval(&line).for_each(move |event| {
-                        let w = w.clone();
-                        print(w, idx, &event)
-                    })
+                    let (res, req) = futures::sync::oneshot::channel();
+                    w.send(crate::state::StateEvent::Line(idx, line, res))
+                        .map_err(|e| Error::Sending { source: e })
+                        .and_then(|_| {
+                            req.map_err(|e| Error::Receiving { source: e })
+                        })
                 })
                 .then(move |res| match res {
                     // successful run or empty input means prompt again
@@ -62,25 +73,6 @@ fn read() -> impl futures::future::Future<Item = String, Error = Error> {
         .into_future()
         .flatten()
         .map_err(|e| Error::Read { source: e })
-}
-
-fn eval(
-    line: &str,
-) -> impl futures::stream::Stream<Item = crate::eval::CommandEvent, Error = Error>
-{
-    crate::eval::eval(line)
-        .into_future()
-        .flatten_stream()
-        .map_err(|e| Error::Eval { source: e })
-}
-
-fn print(
-    w: futures::sync::mpsc::Sender<crate::state::StateEvent>,
-    idx: usize,
-    event: &crate::eval::CommandEvent,
-) -> impl futures::future::Future<Item = (), Error = Error> {
-    crate::state::update(w, idx, event)
-        .map_err(|e| Error::Print { source: e })
 }
 
 fn error(e: &Error) {
