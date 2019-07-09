@@ -7,10 +7,8 @@ pub enum Error {
     #[snafu(display("invalid command index: {}", idx))]
     InvalidCommandIndex { idx: usize },
 
-    #[snafu(display("error sending message: {}", source))]
-    Sending {
-        source: futures::sync::mpsc::SendError<StateEvent>,
-    },
+    #[snafu(display("error sending message"))]
+    Sending,
 
     #[snafu(display("error printing output: {}", source))]
     PrintOutput { source: std::io::Error },
@@ -23,7 +21,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum StateEvent {
-    Line(usize, String, futures::sync::oneshot::Sender<()>),
+    Line(usize, String, futures::sync::oneshot::Sender<Result<()>>),
 }
 
 pub struct State {
@@ -43,14 +41,21 @@ impl State {
         &mut self,
         idx: usize,
         line: &str,
-        res: futures::sync::oneshot::Sender<()>,
-    ) -> Result<()> {
-        snafu::ensure!(
-            !self.commands.contains_key(&idx),
-            InvalidCommandIndex { idx }
-        );
-        let eval = crate::eval::eval(line).context(Eval)?;
-        self.commands.insert(idx, Command::new(eval, res));
+        res: futures::sync::oneshot::Sender<Result<()>>,
+    ) -> std::result::Result<
+        (),
+        (futures::sync::oneshot::Sender<Result<()>>, Error),
+    > {
+        if self.commands.contains_key(&idx) {
+            return Err((res, Error::InvalidCommandIndex { idx }));
+        }
+        let eval = crate::eval::eval(line).context(Eval);
+        match eval {
+            Ok(eval) => {
+                self.commands.insert(idx, Command::new(eval, res));
+            }
+            Err(e) => return Err((res, e)),
+        }
         Ok(())
     }
 
@@ -115,7 +120,12 @@ impl State {
                     line,
                     res,
                 ))) => {
-                    self.eval(idx, &line, res)?;
+                    match self.eval(idx, &line, res) {
+                        Ok(()) => {}
+                        Err((res, e)) => {
+                            res.send(Err(e)).map_err(|_| Error::Sending)?;
+                        }
+                    }
                     did_work = true;
                 }
                 futures::Async::Ready(None) => {
@@ -155,8 +165,8 @@ impl State {
                             .remove(&idx)
                             .context(InvalidCommandIndex { idx })?
                             .res
-                            .send(())
-                            .map_err(|()| unreachable!())?;
+                            .send(Ok(()))
+                            .map_err(|_| Error::Sending)?;
                         did_work = true;
                     }
                     futures::Async::NotReady => {}
@@ -188,7 +198,7 @@ impl futures::future::Future for State {
 
 struct Command {
     future: crate::eval::Eval,
-    res: futures::sync::oneshot::Sender<()>,
+    res: futures::sync::oneshot::Sender<Result<()>>,
     cmd: Option<String>,
     args: Option<Vec<String>>,
     output: Vec<u8>,
@@ -198,7 +208,7 @@ struct Command {
 impl Command {
     fn new(
         future: crate::eval::Eval,
-        res: futures::sync::oneshot::Sender<()>,
+        res: futures::sync::oneshot::Sender<Result<()>>,
     ) -> Self {
         Self {
             future,

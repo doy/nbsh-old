@@ -8,8 +8,8 @@ pub enum Error {
     #[snafu(display("error during read: {}", source))]
     Read { source: crate::readline::Error },
 
-    #[snafu(display("error during eval: {}", source))]
-    Eval { source: crate::eval::Error },
+    #[snafu(display("error from state: {}", source))]
+    State { source: crate::state::Error },
 
     #[snafu(display("error during sending: {}", source))]
     Sending {
@@ -41,14 +41,14 @@ pub fn tui() {
                 })
                 .then(move |res| match res {
                     // successful run or empty input means prompt again
-                    Ok(_)
-                    | Err(Error::Eval {
+                    Ok(Ok(()))
+                    | Ok(Err(crate::state::Error::Eval {
                         source:
                             crate::eval::Error::Parser {
                                 source: crate::parser::Error::CommandRequired,
                                 ..
                             },
-                    }) => Ok(futures::future::Loop::Continue(idx + 1)),
+                    })) => Ok(futures::future::Loop::Continue(idx + 1)),
                     // eof means we're done
                     Err(Error::Read {
                         source: crate::readline::Error::EOF,
@@ -57,6 +57,10 @@ pub fn tui() {
                     // prompt again
                     Err(e) => {
                         error(&e);
+                        Ok(futures::future::Loop::Continue(idx + 1))
+                    }
+                    Ok(Err(e)) => {
+                        error(&Error::State { source: e });
                         Ok(futures::future::Loop::Continue(idx + 1))
                     }
                 })
