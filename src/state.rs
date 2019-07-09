@@ -1,5 +1,6 @@
 use futures::future::Future as _;
 use futures::sink::Sink as _;
+use futures::stream::Stream as _;
 use snafu::{OptionExt as _, ResultExt as _};
 use std::io::Write as _;
 
@@ -93,29 +94,28 @@ impl State {
     }
 }
 
-impl futures::stream::Stream for State {
+impl futures::future::Future for State {
     type Item = ();
     type Error = Error;
 
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let event = futures::try_ready!(self
-            .r
-            .poll()
-            .map_err(|_| Error::Unreachable));
-        match event {
-            Some(StateEvent::Start(idx, cmd, args)) => {
-                self.command_start(idx, &cmd, &args)?;
-                Ok(futures::Async::Ready(Some(())))
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        loop {
+            let event = futures::try_ready!(self
+                .r
+                .poll()
+                .map_err(|_| Error::Unreachable));
+            match event {
+                Some(StateEvent::Start(idx, cmd, args)) => {
+                    self.command_start(idx, &cmd, &args)?;
+                }
+                Some(StateEvent::Output(idx, output)) => {
+                    self.command_output(idx, &output)?;
+                }
+                Some(StateEvent::Exit(idx, status)) => {
+                    self.command_exit(idx, status)?;
+                }
+                None => return Ok(futures::Async::Ready(())),
             }
-            Some(StateEvent::Output(idx, output)) => {
-                self.command_output(idx, &output)?;
-                Ok(futures::Async::Ready(Some(())))
-            }
-            Some(StateEvent::Exit(idx, status)) => {
-                self.command_exit(idx, status)?;
-                Ok(futures::Async::Ready(Some(())))
-            }
-            None => Ok(futures::Async::Ready(None)),
         }
     }
 }

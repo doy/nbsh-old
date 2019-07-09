@@ -18,50 +18,42 @@ pub fn repl() {
     tokio::run(futures::lazy(|| {
         let (w, r) = futures::sync::mpsc::channel(0);
 
-        let state_stream = crate::state::State::new(r).map_err(|e| {
+        tokio::spawn(crate::state::State::new(r).map_err(|e| {
             error(&Error::Print { source: e });
-        });
-        tokio::spawn(state_stream.collect().map(|_| ()));
+        }));
 
-        let loop_stream =
-            futures::stream::unfold((false, 0), move |(done, idx)| {
-                if done {
-                    return None;
-                }
-                let w = w.clone();
-
-                let repl = read()
-                    .and_then(move |line| {
-                        eval(&line).for_each(move |event| {
-                            let w = w.clone();
-                            print(w, idx, &event)
-                        })
+        futures::future::loop_fn(0, move |idx| {
+            let w = w.clone();
+            read()
+                .and_then(move |line| {
+                    let w = w.clone();
+                    eval(&line).for_each(move |event| {
+                        let w = w.clone();
+                        print(w, idx, &event)
                     })
-                    .then(move |res| match res {
-                        // successful run or empty input means prompt again
-                        Ok(_)
-                        | Err(Error::Eval {
-                            source:
-                                crate::eval::Error::Parser {
-                                    source:
-                                        crate::parser::Error::CommandRequired,
-                                    ..
-                                },
-                        }) => Ok(((false, idx + 1), (false, idx + 1))),
-                        // eof means we're done
-                        Err(Error::Read {
-                            source: crate::readline::Error::EOF,
-                        }) => Ok(((false, idx + 1), (true, idx + 1))),
-                        // any other errors should be displayed, then we
-                        // prompt again
-                        Err(e) => {
-                            error(&e);
-                            Ok(((false, idx + 1), (false, idx + 1)))
-                        }
-                    });
-                Some(repl)
-            });
-        loop_stream.collect().map(|_| ())
+                })
+                .then(move |res| match res {
+                    // successful run or empty input means prompt again
+                    Ok(_)
+                    | Err(Error::Eval {
+                        source:
+                            crate::eval::Error::Parser {
+                                source: crate::parser::Error::CommandRequired,
+                                ..
+                            },
+                    }) => Ok(futures::future::Loop::Continue(idx + 1)),
+                    // eof means we're done
+                    Err(Error::Read {
+                        source: crate::readline::Error::EOF,
+                    }) => Ok(futures::future::Loop::Break(())),
+                    // any other errors should be displayed, then we
+                    // prompt again
+                    Err(e) => {
+                        error(&e);
+                        Ok(futures::future::Loop::Continue(idx + 1))
+                    }
+                })
+        })
     }));
 }
 
