@@ -10,7 +10,7 @@ pub enum Error {
     InvalidCommandIndex { idx: usize },
 
     #[snafu(display("error sending message: {}", source))]
-    Send {
+    Sending {
         source: futures::sync::mpsc::SendError<StateEvent>,
     },
 
@@ -138,7 +138,7 @@ pub fn update(
         }
     }
     .map(|_| ())
-    .map_err(|e| Error::Send { source: e })
+    .map_err(|e| Error::Sending { source: e })
 }
 
 #[derive(Debug, Clone)]
