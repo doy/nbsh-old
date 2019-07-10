@@ -1,3 +1,4 @@
+use futures::future::Future as _;
 use futures::stream::Stream as _;
 use snafu::{OptionExt as _, ResultExt as _};
 use std::io::Write as _;
@@ -7,59 +8,59 @@ pub enum Error {
     #[snafu(display("invalid command index: {}", idx))]
     InvalidCommandIndex { idx: usize },
 
-    #[snafu(display("error sending message"))]
-    Sending,
-
-    #[snafu(display("error printing output: {}", source))]
-    PrintOutput { source: std::io::Error },
+    #[snafu(display("error during read: {}", source))]
+    Read { source: crate::readline::Error },
 
     #[snafu(display("error during eval: {}", source))]
     Eval { source: crate::eval::Error },
+
+    #[snafu(display("error during print: {}", source))]
+    Print { source: std::io::Error },
+
+    #[snafu(display("eof"))]
+    EOF,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug)]
-pub enum StateEvent {
-    Line(usize, String, futures::sync::oneshot::Sender<Result<()>>),
-}
-
 pub struct State {
-    r: futures::sync::mpsc::Receiver<StateEvent>,
+    idx: usize,
+    readline: Option<crate::readline::Readline>,
     commands: std::collections::HashMap<usize, Command>,
 }
 
 impl State {
-    pub fn new(r: futures::sync::mpsc::Receiver<StateEvent>) -> Self {
-        Self {
-            r,
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            idx: 0,
+            readline: Some(Self::read()?),
             commands: std::collections::HashMap::new(),
-        }
+        })
     }
 
-    pub fn eval(
+    fn read() -> Result<crate::readline::Readline> {
+        crate::readline::readline("$ ", true).context(Read)
+    }
+
+    fn eval(
         &mut self,
         idx: usize,
         line: &str,
-        res: futures::sync::oneshot::Sender<Result<()>>,
-    ) -> std::result::Result<
-        (),
-        (futures::sync::oneshot::Sender<Result<()>>, Error),
-    > {
+    ) -> std::result::Result<(), Error> {
         if self.commands.contains_key(&idx) {
-            return Err((res, Error::InvalidCommandIndex { idx }));
+            return Err(Error::InvalidCommandIndex { idx });
         }
         let eval = crate::eval::eval(line).context(Eval);
         match eval {
             Ok(eval) => {
-                self.commands.insert(idx, Command::new(eval, res));
+                self.commands.insert(idx, Command::new(eval));
             }
-            Err(e) => return Err((res, e)),
+            Err(e) => return Err(e),
         }
         Ok(())
     }
 
-    pub fn command_start(
+    fn command_start(
         &mut self,
         idx: usize,
         cmd: &str,
@@ -77,11 +78,7 @@ impl State {
         Ok(())
     }
 
-    pub fn command_output(
-        &mut self,
-        idx: usize,
-        output: &[u8],
-    ) -> Result<()> {
+    fn command_output(&mut self, idx: usize, output: &[u8]) -> Result<()> {
         let command = self
             .commands
             .get_mut(&idx)
@@ -90,13 +87,13 @@ impl State {
 
         let stdout = std::io::stdout();
         let mut stdout = stdout.lock();
-        stdout.write(output).context(PrintOutput)?;
-        stdout.flush().context(PrintOutput)?;
+        stdout.write(output).context(Print)?;
+        stdout.flush().context(Print)?;
 
         Ok(())
     }
 
-    pub fn command_exit(
+    fn command_exit(
         &mut self,
         idx: usize,
         status: std::process::ExitStatus,
@@ -114,24 +111,43 @@ impl State {
         loop {
             let mut did_work = false;
 
-            match self.r.poll().map_err(|()| unreachable!())? {
-                futures::Async::Ready(Some(StateEvent::Line(
-                    idx,
-                    line,
-                    res,
-                ))) => {
-                    match self.eval(idx, &line, res) {
-                        Ok(()) => {}
-                        Err((res, e)) => {
-                            res.send(Err(e)).map_err(|_| Error::Sending)?;
+            if self.readline.is_none() && self.commands.is_empty() {
+                self.idx += 1;
+                self.readline = Some(Self::read()?)
+            }
+
+            if let Some(mut r) = self.readline.take() {
+                match r.poll() {
+                    Ok(futures::Async::Ready(line)) => {
+                        // overlapping RawScreen lifespans don't work properly
+                        // - if readline creates a RawScreen, then eval
+                        // creates a separate one, then readline drops it, the
+                        // screen will go back to cooked even though a
+                        // RawScreen instance is still live.
+                        drop(r);
+
+                        match self.eval(self.idx, &line) {
+                            Ok(())
+                            | Err(Error::Eval {
+                                source:
+                                    crate::eval::Error::Parser {
+                                        source:
+                                            crate::parser::Error::CommandRequired,
+                                        ..
+                                    },
+                            }) => {}
+                            Err(e) => return Err(e),
                         }
+                        did_work = true;
                     }
-                    did_work = true;
+                    Ok(futures::Async::NotReady) => {
+                        self.readline.replace(r);
+                    }
+                    Err(crate::readline::Error::EOF) => {
+                        return Err(Error::EOF)
+                    }
+                    Err(e) => return Err(e).context(Read),
                 }
-                futures::Async::Ready(None) => {
-                    return Ok(futures::Async::Ready(()));
-                }
-                futures::Async::NotReady => {}
             }
 
             for idx in self.commands.keys().cloned().collect::<Vec<usize>>() {
@@ -163,10 +179,7 @@ impl State {
                     futures::Async::Ready(None) => {
                         self.commands
                             .remove(&idx)
-                            .context(InvalidCommandIndex { idx })?
-                            .res
-                            .send(Ok(()))
-                            .map_err(|_| Error::Sending)?;
+                            .context(InvalidCommandIndex { idx })?;
                         did_work = true;
                     }
                     futures::Async::NotReady => {}
@@ -188,6 +201,7 @@ impl futures::future::Future for State {
         loop {
             match self.poll_with_errors() {
                 Ok(a) => return Ok(a),
+                Err(Error::EOF) => return Ok(futures::Async::Ready(())),
                 Err(e) => {
                     eprint!("error polling state: {}\r\n", e);
                 }
@@ -198,7 +212,6 @@ impl futures::future::Future for State {
 
 struct Command {
     future: crate::eval::Eval,
-    res: futures::sync::oneshot::Sender<Result<()>>,
     cmd: Option<String>,
     args: Option<Vec<String>>,
     output: Vec<u8>,
@@ -206,13 +219,9 @@ struct Command {
 }
 
 impl Command {
-    fn new(
-        future: crate::eval::Eval,
-        res: futures::sync::oneshot::Sender<Result<()>>,
-    ) -> Self {
+    fn new(future: crate::eval::Eval) -> Self {
         Self {
             future,
-            res,
             cmd: None,
             args: None,
             output: vec![],
