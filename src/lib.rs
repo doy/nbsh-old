@@ -17,7 +17,6 @@ mod eval;
 mod parser;
 mod process;
 mod readline;
-mod state;
 
 pub mod repl;
 pub mod tui;
