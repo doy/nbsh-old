@@ -35,10 +35,6 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub fn exec(cmd: &str, args: &[String]) -> Result<Builtin> {
-    Builtin::new(cmd, args)
-}
-
 pub struct Builtin {
     cmd: String,
     args: Vec<String>,
@@ -47,7 +43,7 @@ pub struct Builtin {
 }
 
 impl Builtin {
-    fn new(cmd: &str, args: &[String]) -> Result<Self> {
+    pub fn new(cmd: &str, args: &[String]) -> Result<Self> {
         match cmd {
             "cd" => Ok(Self {
                 cmd: cmd.to_string(),

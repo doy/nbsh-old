@@ -1,4 +1,4 @@
-use futures::future::{Future as _, IntoFuture as _};
+use futures::future::Future as _;
 use futures::stream::Stream as _;
 use snafu::futures01::{FutureExt as _, StreamExt as _};
 use snafu::ResultExt as _;
@@ -51,20 +51,14 @@ pub fn repl() {
 }
 
 fn read() -> impl futures::future::Future<Item = String, Error = Error> {
-    crate::readline::readline()
-        .into_future()
-        .flatten()
-        .context(Read)
+    crate::readline::readline().context(Read)
 }
 
 fn eval(
     line: &str,
 ) -> impl futures::stream::Stream<Item = crate::eval::CommandEvent, Error = Error>
 {
-    crate::eval::eval(line)
-        .into_future()
-        .flatten_stream()
-        .context(Eval)
+    crate::eval::eval(line).context(Eval)
 }
 
 fn print(event: &crate::eval::CommandEvent) -> Result<()> {

@@ -8,6 +8,12 @@ enum Error {
     #[snafu(display("invalid command index: {}", idx))]
     InvalidCommandIndex { idx: usize },
 
+    #[snafu(display(
+        "failed to put the terminal into raw mode: {}",
+        source
+    ))]
+    IntoRawMode { source: std::io::Error },
+
     #[snafu(display("error during read: {}", source))]
     Read { source: crate::readline::Error },
 
@@ -32,6 +38,7 @@ pub struct Tui {
     idx: usize,
     readline: Option<crate::readline::Readline>,
     commands: std::collections::HashMap<usize, Command>,
+    raw_screen: Option<crossterm::RawScreen>,
 }
 
 impl Tui {
@@ -39,8 +46,8 @@ impl Tui {
         Self::default()
     }
 
-    fn read() -> Result<crate::readline::Readline> {
-        crate::readline::readline().context(Read)
+    fn read() -> crate::readline::Readline {
+        crate::readline::Readline::new().set_raw(false)
     }
 
     fn eval(
@@ -51,13 +58,8 @@ impl Tui {
         if self.commands.contains_key(&idx) {
             return Err(Error::InvalidCommandIndex { idx });
         }
-        let eval = crate::eval::eval(line).context(Eval);
-        match eval {
-            Ok(eval) => {
-                self.commands.insert(idx, Command::new(eval));
-            }
-            Err(e) => return Err(e),
-        }
+        let eval = crate::eval::Eval::new(line).set_raw(false);
+        self.commands.insert(idx, Command::new(eval));
         Ok(())
     }
 
@@ -124,25 +126,17 @@ impl Tui {
         Ok(())
     }
 
-    fn poll_read(&mut self) -> Result<bool> {
+    fn poll_read(&mut self) {
         if self.readline.is_none() && self.commands.is_empty() {
             self.idx += 1;
-            self.readline = Some(Self::read()?)
+            self.readline = Some(Self::read())
         }
-        Ok(false)
     }
 
     fn poll_eval(&mut self) -> Result<bool> {
         if let Some(mut r) = self.readline.take() {
             match r.poll() {
                 Ok(futures::Async::Ready(line)) => {
-                    // overlapping RawScreen lifespans don't work properly
-                    // - if readline creates a RawScreen, then eval
-                    // creates a separate one, then readline drops it, the
-                    // screen will go back to cooked even though a
-                    // RawScreen instance is still live.
-                    drop(r);
-
                     match self.eval(self.idx, &line) {
                         Ok(())
                         | Err(Error::Eval {
@@ -173,25 +167,36 @@ impl Tui {
         let mut did_work = false;
 
         for idx in self.commands.keys().cloned().collect::<Vec<usize>>() {
-            match self
-                .commands
-                .get_mut(&idx)
-                .unwrap()
-                .future
-                .poll()
-                .context(Eval)?
-            {
-                futures::Async::Ready(Some(event)) => {
+            match self.commands.get_mut(&idx).unwrap().future.poll() {
+                Ok(futures::Async::Ready(Some(event))) => {
                     self.print(idx, event)?;
                     did_work = true;
                 }
-                futures::Async::Ready(None) => {
+                Ok(futures::Async::Ready(None)) => {
                     self.commands
                         .remove(&idx)
                         .context(InvalidCommandIndex { idx })?;
                     did_work = true;
                 }
-                futures::Async::NotReady => {}
+                Ok(futures::Async::NotReady) => {}
+
+                // Parser and Command errors are always fatal, but execution
+                // errors might not be
+                Err(e @ crate::eval::Error::Parser { .. }) => {
+                    self.commands
+                        .remove(&idx)
+                        .context(InvalidCommandIndex { idx })?;
+                    return Err(e).context(Eval);
+                }
+                Err(e @ crate::eval::Error::Command { .. }) => {
+                    self.commands
+                        .remove(&idx)
+                        .context(InvalidCommandIndex { idx })?;
+                    return Err(e).context(Eval);
+                }
+                Err(e) => {
+                    return Err(e).context(Eval);
+                }
             }
         }
 
@@ -199,10 +204,16 @@ impl Tui {
     }
 
     fn poll_with_errors(&mut self) -> futures::Poll<(), Error> {
+        if self.raw_screen.is_none() {
+            self.raw_screen = Some(
+                crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?,
+            );
+        }
+
         loop {
             let mut did_work = false;
 
-            did_work |= self.poll_read()?;
+            self.poll_read();
             did_work |= self.poll_eval()?;
             did_work |= self.poll_print()?;
 

@@ -39,11 +39,7 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub fn spawn(cmd: &str, args: &[String]) -> Result<RunningProcess> {
-    RunningProcess::new(cmd, args)
-}
-
-pub struct RunningProcess {
+pub struct Process {
     pty: tokio_pty_process::AsyncPtyMaster,
     process: tokio_pty_process::Child,
     // TODO: tokio::io::Stdin is broken
@@ -55,7 +51,8 @@ pub struct RunningProcess {
     started: bool,
     output_done: bool,
     exit_done: bool,
-    _screen: crossterm::RawScreen,
+    manage_screen: bool,
+    raw_screen: Option<crossterm::RawScreen>,
 }
 
 struct Resizer<'a, T> {
@@ -75,8 +72,8 @@ impl<'a, T: tokio_pty_process::PtyMaster> futures::future::Future
     }
 }
 
-impl RunningProcess {
-    fn new(cmd: &str, args: &[String]) -> Result<Self> {
+impl Process {
+    pub fn new(cmd: &str, args: &[String]) -> Result<Self> {
         let pty =
             tokio_pty_process::AsyncPtyMaster::open().context(OpenPty)?;
 
@@ -108,18 +105,30 @@ impl RunningProcess {
             started: false,
             output_done: false,
             exit_done: false,
-            _screen: crossterm::RawScreen::into_raw_mode()
-                .context(IntoRawMode)?,
+            manage_screen: true,
+            raw_screen: None,
         })
+    }
+
+    #[allow(dead_code)]
+    pub fn set_raw(mut self, raw: bool) -> Self {
+        self.manage_screen = raw;
+        self
     }
 }
 
 #[must_use = "streams do nothing unless polled"]
-impl futures::stream::Stream for RunningProcess {
+impl futures::stream::Stream for Process {
     type Item = crate::eval::CommandEvent;
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        if self.manage_screen && self.raw_screen.is_none() {
+            self.raw_screen = Some(
+                crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?,
+            );
+        }
+
         if !self.started {
             self.started = true;
             return Ok(futures::Async::Ready(Some(

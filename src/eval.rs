@@ -28,9 +28,10 @@ pub enum Error {
     },
 }
 
+#[allow(dead_code)]
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub fn eval(line: &str) -> Result<Eval> {
+pub fn eval(line: &str) -> Eval {
     Eval::new(line)
 }
 
@@ -41,32 +42,28 @@ pub enum CommandEvent {
 }
 
 pub struct Eval {
-    stream: Box<
-        dyn futures::stream::Stream<Item = CommandEvent, Error = Error>
-            + Send,
+    line: String,
+    stream: Option<
+        Box<
+            dyn futures::stream::Stream<Item = CommandEvent, Error = Error>
+                + Send,
+        >,
     >,
+    manage_screen: bool,
 }
 
 impl Eval {
-    fn new(line: &str) -> Result<Self> {
-        let (cmd, args) =
-            crate::parser::parse(line).context(Parser { line })?;
-        let builtin_stream = crate::builtins::exec(&cmd, &args);
-        let stream: Box<
-            dyn futures::stream::Stream<Item = CommandEvent, Error = Error>
-                + Send,
-        > = if let Ok(s) = builtin_stream {
-            Box::new(s.context(BuiltinExecution { cmd }))
-        } else {
-            let process_stream = crate::process::spawn(&cmd, &args);
-            match process_stream {
-                Ok(s) => Box::new(s.context(ProcessExecution { cmd })),
-                Err(e) => {
-                    return Err(e).context(Command { cmd });
-                }
-            }
-        };
-        Ok(Self { stream })
+    pub fn new(line: &str) -> Self {
+        Self {
+            line: line.to_string(),
+            stream: None,
+            manage_screen: true,
+        }
+    }
+
+    pub fn set_raw(mut self, raw: bool) -> Self {
+        self.manage_screen = raw;
+        self
     }
 }
 
@@ -76,6 +73,32 @@ impl futures::stream::Stream for Eval {
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        self.stream.poll()
+        if self.stream.is_none() {
+            let line = self.line.as_ref();
+            let (cmd, args) =
+                crate::parser::parse(line).context(Parser { line })?;
+            let builtin_stream = crate::builtins::Builtin::new(&cmd, &args);
+            let stream: Box<
+                dyn futures::stream::Stream<
+                        Item = CommandEvent,
+                        Error = Error,
+                    > + Send,
+            > = if let Ok(s) = builtin_stream {
+                Box::new(s.context(BuiltinExecution { cmd }))
+            } else {
+                let process_stream =
+                    crate::process::Process::new(&cmd, &args)
+                        .context(Command { cmd: cmd.clone() })?
+                        .set_raw(self.manage_screen);
+                Box::new(process_stream.context(ProcessExecution { cmd }))
+            };
+            self.stream = Some(stream);
+        }
+
+        if let Some(ref mut stream) = &mut self.stream {
+            stream.poll()
+        } else {
+            unreachable!()
+        }
     }
 }

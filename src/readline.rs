@@ -24,19 +24,21 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub fn readline() -> Result<Readline> {
+pub fn readline() -> Readline {
     Readline::new()
 }
 
 pub struct Readline {
     reader: Option<KeyReader>,
     state: ReadlineState,
-    _raw_screen: crossterm::RawScreen,
+    raw_screen: Option<crossterm::RawScreen>,
 }
 
 struct ReadlineState {
     prompt: String,
     echo: bool,
+    output: bool,
+    manage_screen: bool,
 
     buffer: String,
     cursor: usize,
@@ -44,21 +46,20 @@ struct ReadlineState {
 }
 
 impl Readline {
-    pub fn new() -> Result<Self> {
-        let screen =
-            crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?;
-
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             reader: None,
             state: ReadlineState {
                 prompt: String::from("$ "),
                 echo: true,
+                output: true,
+                manage_screen: true,
                 buffer: String::new(),
                 cursor: 0,
                 wrote_prompt: false,
             },
-            _raw_screen: screen,
-        })
+            raw_screen: None,
+        }
     }
 
     #[allow(dead_code)]
@@ -71,6 +72,22 @@ impl Readline {
     pub fn echo(mut self, echo: bool) -> Self {
         self.state.echo = echo;
         self
+    }
+
+    #[allow(dead_code)]
+    pub fn disable_output(mut self, disable: bool) -> Self {
+        self.state.output = !disable;
+        self
+    }
+
+    pub fn set_raw(mut self, raw: bool) -> Self {
+        self.state.manage_screen = raw;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn cursor_pos(&self) -> usize {
+        self.state.cursor
     }
 
     fn with_reader<F, T>(&mut self, f: F) -> Result<T>
@@ -212,6 +229,10 @@ impl ReadlineState {
     }
 
     fn write(&self, buf: &[u8]) -> std::io::Result<()> {
+        if !self.output {
+            return Ok(());
+        }
+
         let stdout = std::io::stdout();
         let mut stdout = stdout.lock();
         stdout.write_all(buf)?;
@@ -246,6 +267,15 @@ impl ReadlineState {
     }
 }
 
+impl std::fmt::Display for Readline {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter,
+    ) -> std::result::Result<(), std::fmt::Error> {
+        write!(f, "{}{}", self.state.prompt, self.state.buffer)
+    }
+}
+
 #[must_use = "futures do nothing unless polled"]
 impl futures::future::Future for Readline {
     type Item = String;
@@ -255,6 +285,12 @@ impl futures::future::Future for Readline {
         if !self.state.wrote_prompt {
             self.state.prompt().context(WriteToTerminal)?;
             self.state.wrote_prompt = true;
+        }
+
+        if self.state.manage_screen && self.raw_screen.is_none() {
+            self.raw_screen = Some(
+                crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?,
+            );
         }
 
         self.with_reader(|reader, state| {
