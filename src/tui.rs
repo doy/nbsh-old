@@ -4,7 +4,7 @@ use snafu::{OptionExt as _, ResultExt as _};
 use std::io::Write as _;
 
 #[derive(Debug, snafu::Snafu)]
-pub enum Error {
+enum Error {
     #[snafu(display("invalid command index: {}", idx))]
     InvalidCommandIndex { idx: usize },
 
@@ -21,7 +21,7 @@ pub enum Error {
     EOF,
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Error>;
 
 pub fn tui() {
     tokio::run(Tui::new());

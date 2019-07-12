@@ -5,7 +5,7 @@ use snafu::ResultExt as _;
 use std::io::Write as _;
 
 #[derive(Debug, snafu::Snafu)]
-pub enum Error {
+enum Error {
     #[snafu(display("error during read: {}", source))]
     Read { source: crate::readline::Error },
 
@@ -16,7 +16,7 @@ pub enum Error {
     Print { source: std::io::Error },
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
+type Result<T> = std::result::Result<T, Error>;
 
 pub fn repl() {
     tokio::run(futures::future::loop_fn((), |_| {
