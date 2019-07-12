@@ -97,7 +97,6 @@ impl Tui {
             .context(InvalidCommandIndex { idx })?;
         let cmd = cmd.to_string();
         let args = args.to_vec();
-        eprint!("running '{} {:?}'\r\n", cmd, args);
         command.cmd = Some(cmd);
         command.args = Some(args);
         Ok(())
@@ -128,7 +127,6 @@ impl Tui {
             .get_mut(&idx)
             .context(InvalidCommandIndex { idx })?;
         command.status = Some(status);
-        eprint!("command exited: {}\r\n", status);
         Ok(())
     }
 
