@@ -40,7 +40,7 @@ impl Tui {
     }
 
     fn read() -> Result<crate::readline::Readline> {
-        crate::readline::readline("$ ", true).context(Read)
+        crate::readline::readline().context(Read)
     }
 
     fn eval(

@@ -51,7 +51,7 @@ pub fn repl() {
 }
 
 fn read() -> impl futures::future::Future<Item = String, Error = Error> {
-    crate::readline::readline("$ ", true)
+    crate::readline::readline()
         .into_future()
         .flatten()
         .context(Read)

@@ -24,8 +24,8 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub fn readline(prompt: &str, echo: bool) -> Result<Readline> {
-    Readline::new(prompt, echo)
+pub fn readline() -> Result<Readline> {
+    Readline::new()
 }
 
 pub struct Readline {
@@ -44,21 +44,33 @@ struct ReadlineState {
 }
 
 impl Readline {
-    fn new(prompt: &str, echo: bool) -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let screen =
             crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?;
 
         Ok(Self {
             reader: None,
             state: ReadlineState {
-                prompt: prompt.to_string(),
-                echo,
+                prompt: String::from("$ "),
+                echo: true,
                 buffer: String::new(),
                 cursor: 0,
                 wrote_prompt: false,
             },
             _raw_screen: screen,
         })
+    }
+
+    #[allow(dead_code)]
+    pub fn prompt(mut self, prompt: &str) -> Self {
+        self.state.prompt = prompt.to_string();
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn echo(mut self, echo: bool) -> Self {
+        self.state.echo = echo;
+        self
     }
 
     fn with_reader<F, T>(&mut self, f: F) -> Result<T>

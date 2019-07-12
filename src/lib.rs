@@ -6,6 +6,7 @@
 #![allow(clippy::if_not_else)]
 // match_same_arms is buggy, doesn't notice differences due to match arm order
 #![allow(clippy::match_same_arms)]
+#![allow(clippy::missing_const_for_fn)]
 #![allow(clippy::module_name_repetitions)]
 #![allow(clippy::multiple_crate_versions)]
 #![allow(clippy::similar_names)]
