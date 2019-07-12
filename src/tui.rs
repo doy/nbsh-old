@@ -24,12 +24,10 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn tui() {
-    match Tui::new() {
-        Ok(state) => tokio::run(state),
-        Err(e) => eprintln!("failed to create state: {}", e),
-    }
+    tokio::run(Tui::new());
 }
 
+#[derive(Default)]
 pub struct Tui {
     idx: usize,
     readline: Option<crate::readline::Readline>,
@@ -37,12 +35,8 @@ pub struct Tui {
 }
 
 impl Tui {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            idx: 0,
-            readline: Some(Self::read()?),
-            commands: std::collections::HashMap::new(),
-        })
+    pub fn new() -> Self {
+        Self::default()
     }
 
     fn read() -> Result<crate::readline::Readline> {
