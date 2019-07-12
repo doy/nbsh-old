@@ -67,6 +67,24 @@ impl Tui {
         Ok(())
     }
 
+    fn print(
+        &mut self,
+        idx: usize,
+        event: crate::eval::CommandEvent,
+    ) -> Result<()> {
+        match event {
+            crate::eval::CommandEvent::CommandStart(cmd, args) => {
+                self.command_start(idx, &cmd, &args)
+            }
+            crate::eval::CommandEvent::Output(out) => {
+                self.command_output(idx, &out)
+            }
+            crate::eval::CommandEvent::CommandExit(status) => {
+                self.command_exit(idx, status)
+            }
+        }
+    }
+
     fn command_start(
         &mut self,
         idx: usize,
@@ -114,84 +132,87 @@ impl Tui {
         Ok(())
     }
 
+    fn poll_read(&mut self) -> Result<bool> {
+        if self.readline.is_none() && self.commands.is_empty() {
+            self.idx += 1;
+            self.readline = Some(Self::read()?)
+        }
+        Ok(false)
+    }
+
+    fn poll_eval(&mut self) -> Result<bool> {
+        if let Some(mut r) = self.readline.take() {
+            match r.poll() {
+                Ok(futures::Async::Ready(line)) => {
+                    // overlapping RawScreen lifespans don't work properly
+                    // - if readline creates a RawScreen, then eval
+                    // creates a separate one, then readline drops it, the
+                    // screen will go back to cooked even though a
+                    // RawScreen instance is still live.
+                    drop(r);
+
+                    match self.eval(self.idx, &line) {
+                        Ok(())
+                        | Err(Error::Eval {
+                            source:
+                                crate::eval::Error::Parser {
+                                    source:
+                                        crate::parser::Error::CommandRequired,
+                                    ..
+                                },
+                        }) => {}
+                        Err(e) => return Err(e),
+                    }
+                    Ok(true)
+                }
+                Ok(futures::Async::NotReady) => {
+                    self.readline.replace(r);
+                    Ok(false)
+                }
+                Err(crate::readline::Error::EOF) => Err(Error::EOF),
+                Err(e) => Err(e).context(Read),
+            }
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn poll_print(&mut self) -> Result<bool> {
+        let mut did_work = false;
+
+        for idx in self.commands.keys().cloned().collect::<Vec<usize>>() {
+            match self
+                .commands
+                .get_mut(&idx)
+                .unwrap()
+                .future
+                .poll()
+                .context(Eval)?
+            {
+                futures::Async::Ready(Some(event)) => {
+                    self.print(idx, event)?;
+                    did_work = true;
+                }
+                futures::Async::Ready(None) => {
+                    self.commands
+                        .remove(&idx)
+                        .context(InvalidCommandIndex { idx })?;
+                    did_work = true;
+                }
+                futures::Async::NotReady => {}
+            }
+        }
+
+        Ok(did_work)
+    }
+
     fn poll_with_errors(&mut self) -> futures::Poll<(), Error> {
         loop {
             let mut did_work = false;
 
-            if self.readline.is_none() && self.commands.is_empty() {
-                self.idx += 1;
-                self.readline = Some(Self::read()?)
-            }
-
-            if let Some(mut r) = self.readline.take() {
-                match r.poll() {
-                    Ok(futures::Async::Ready(line)) => {
-                        // overlapping RawScreen lifespans don't work properly
-                        // - if readline creates a RawScreen, then eval
-                        // creates a separate one, then readline drops it, the
-                        // screen will go back to cooked even though a
-                        // RawScreen instance is still live.
-                        drop(r);
-
-                        match self.eval(self.idx, &line) {
-                            Ok(())
-                            | Err(Error::Eval {
-                                source:
-                                    crate::eval::Error::Parser {
-                                        source:
-                                            crate::parser::Error::CommandRequired,
-                                        ..
-                                    },
-                            }) => {}
-                            Err(e) => return Err(e),
-                        }
-                        did_work = true;
-                    }
-                    Ok(futures::Async::NotReady) => {
-                        self.readline.replace(r);
-                    }
-                    Err(crate::readline::Error::EOF) => {
-                        return Err(Error::EOF)
-                    }
-                    Err(e) => return Err(e).context(Read),
-                }
-            }
-
-            for idx in self.commands.keys().cloned().collect::<Vec<usize>>() {
-                match self
-                    .commands
-                    .get_mut(&idx)
-                    .unwrap()
-                    .future
-                    .poll()
-                    .context(Eval)?
-                {
-                    futures::Async::Ready(Some(event)) => match event {
-                        crate::eval::CommandEvent::CommandStart(
-                            cmd,
-                            args,
-                        ) => {
-                            self.command_start(idx, &cmd, &args)?;
-                            did_work = true;
-                        }
-                        crate::eval::CommandEvent::Output(out) => {
-                            self.command_output(idx, &out)?;
-                            did_work = true;
-                        }
-                        crate::eval::CommandEvent::CommandExit(status) => {
-                            self.command_exit(idx, status)?;
-                            did_work = true;
-                        }
-                    },
-                    futures::Async::Ready(None) => {
-                        self.commands
-                            .remove(&idx)
-                            .context(InvalidCommandIndex { idx })?;
-                        did_work = true;
-                    }
-                    futures::Async::NotReady => {}
-                }
-            }
+            did_work |= self.poll_read()?;
+            did_work |= self.poll_eval()?;
+            did_work |= self.poll_print()?;
 
             if !did_work {
                 return Ok(futures::Async::NotReady);
