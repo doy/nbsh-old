@@ -60,17 +60,17 @@ impl Builtin {
 
 #[must_use = "streams do nothing unless polled"]
 impl futures::stream::Stream for Builtin {
-    type Item = crate::eval::CommandEvent;
+    type Item = tokio_pty_process_stream::Event;
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         if !self.started {
             self.started = true;
             Ok(futures::Async::Ready(Some(
-                crate::eval::CommandEvent::CommandStart(
-                    self.cmd.clone(),
-                    self.args.clone(),
-                ),
+                tokio_pty_process_stream::Event::CommandStart {
+                    cmd: self.cmd.clone(),
+                    args: self.args.clone(),
+                },
             )))
         } else if !self.done {
             self.done = true;
@@ -82,17 +82,17 @@ impl futures::stream::Stream for Builtin {
             };
             res.map(|_| {
                 futures::Async::Ready(Some(
-                    crate::eval::CommandEvent::CommandExit(
-                        std::process::ExitStatus::from_raw(0),
-                    ),
+                    tokio_pty_process_stream::Event::CommandExit {
+                        status: std::process::ExitStatus::from_raw(0),
+                    },
                 ))
             })
             .or_else(|e| match e {
                 Error::UnknownBuiltin { .. } => Err(e),
                 _ => Ok(futures::Async::Ready(Some(
-                    crate::eval::CommandEvent::CommandExit(
-                        std::process::ExitStatus::from_raw(256),
-                    ),
+                    tokio_pty_process_stream::Event::CommandExit {
+                        status: std::process::ExitStatus::from_raw(256),
+                    },
                 ))),
             })
         } else {

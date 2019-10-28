@@ -56,21 +56,24 @@ fn read() -> impl futures::future::Future<Item = String, Error = Error> {
 
 fn eval(
     line: &str,
-) -> impl futures::stream::Stream<Item = crate::eval::CommandEvent, Error = Error>
-{
+) -> impl futures::stream::Stream<
+    Item = tokio_pty_process_stream::Event,
+    Error = Error,
+> {
     crate::eval::eval(line).context(Eval)
 }
 
-fn print(event: &crate::eval::CommandEvent) -> Result<()> {
+fn print(event: &tokio_pty_process_stream::Event) -> Result<()> {
     match event {
-        crate::eval::CommandEvent::CommandStart(_, _) => {}
-        crate::eval::CommandEvent::Output(out) => {
+        tokio_pty_process_stream::Event::CommandStart { .. } => {}
+        tokio_pty_process_stream::Event::Output { data: out } => {
             let stdout = std::io::stdout();
             let mut stdout = stdout.lock();
             stdout.write(out).context(Print)?;
             stdout.flush().context(Print)?;
         }
-        crate::eval::CommandEvent::CommandExit(_) => {}
+        tokio_pty_process_stream::Event::CommandExit { .. } => {}
+        tokio_pty_process_stream::Event::Resize { .. } => {}
     }
     Ok(())
 }

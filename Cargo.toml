@@ -17,4 +17,4 @@ mio = "0.6"
 nix = "0.14"
 snafu = { version = "0.4", features = ["futures-01"] }
 tokio = "0.1"
-tokio-pty-process = "0.4"
+tokio-pty-process-stream = "0.2"

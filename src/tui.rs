@@ -66,17 +66,20 @@ impl Tui {
     fn print(
         &mut self,
         idx: usize,
-        event: crate::eval::CommandEvent,
+        event: tokio_pty_process_stream::Event,
     ) -> Result<()> {
         match event {
-            crate::eval::CommandEvent::CommandStart(cmd, args) => {
+            tokio_pty_process_stream::Event::CommandStart { cmd, args } => {
                 self.command_start(idx, &cmd, &args)
             }
-            crate::eval::CommandEvent::Output(out) => {
+            tokio_pty_process_stream::Event::Output { data: out } => {
                 self.command_output(idx, &out)
             }
-            crate::eval::CommandEvent::CommandExit(status) => {
+            tokio_pty_process_stream::Event::CommandExit { status } => {
                 self.command_exit(idx, status)
+            }
+            tokio_pty_process_stream::Event::Resize { size } => {
+                self.command_resize(idx, size)
             }
         }
     }
@@ -123,6 +126,15 @@ impl Tui {
             .get_mut(&idx)
             .context(InvalidCommandIndex { idx })?;
         command.status = Some(status);
+        Ok(())
+    }
+
+    fn command_resize(
+        &mut self,
+        _idx: usize,
+        _size: (u16, u16),
+    ) -> Result<()> {
+        // TODO
         Ok(())
     }
 

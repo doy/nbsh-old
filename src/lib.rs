@@ -13,11 +13,11 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::write_with_newline)]
 
+mod async_stdin;
 mod builtins;
 mod eval;
 mod key_reader;
 mod parser;
-mod process;
 mod readline;
 
 pub mod repl;
