@@ -15,6 +15,7 @@
 
 mod builtins;
 mod eval;
+mod key_reader;
 mod parser;
 mod process;
 mod readline;

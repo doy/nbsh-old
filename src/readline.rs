@@ -1,3 +1,4 @@
+use futures::stream::Stream as _;
 use snafu::ResultExt as _;
 use std::io::Write as _;
 
@@ -15,11 +16,8 @@ pub enum Error {
     ))]
     IntoRawMode { source: std::io::Error },
 
-    #[snafu(display(
-        "failed to spawn a background thread to read terminal input: {}",
-        source
-    ))]
-    TerminalInputReadingThread { source: std::io::Error },
+    #[snafu(display("{}", source))]
+    KeyReader { source: crate::key_reader::Error },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -29,7 +27,7 @@ pub fn readline() -> Readline {
 }
 
 pub struct Readline {
-    reader: Option<KeyReader>,
+    reader: crate::key_reader::KeyReader,
     state: ReadlineState,
     raw_screen: Option<crossterm::RawScreen>,
 }
@@ -48,7 +46,7 @@ struct ReadlineState {
 impl Readline {
     pub fn new() -> Self {
         Self {
-            reader: None,
+            reader: crate::key_reader::KeyReader::new(),
             state: ReadlineState {
                 prompt: String::from("$ "),
                 echo: true,
@@ -89,26 +87,13 @@ impl Readline {
     pub fn cursor_pos(&self) -> usize {
         self.state.cursor
     }
-
-    fn with_reader<F, T>(&mut self, f: F) -> Result<T>
-    where
-        F: FnOnce(&KeyReader, &mut ReadlineState) -> Result<T>,
-    {
-        let mut reader_opt = self.reader.take();
-        if reader_opt.is_none() {
-            reader_opt = Some(KeyReader::new(futures::task::current())?);
-        }
-        let ret = f(reader_opt.as_ref().unwrap(), &mut self.state);
-        self.reader = reader_opt;
-        ret
-    }
 }
 
 impl ReadlineState {
     fn process_event(
         &mut self,
         event: crossterm::InputEvent,
-    ) -> std::result::Result<futures::Async<String>, Error> {
+    ) -> Result<futures::Async<String>> {
         match event {
             crossterm::InputEvent::Keyboard(e) => {
                 return self.process_keyboard_event(&e);
@@ -122,7 +107,7 @@ impl ReadlineState {
     fn process_keyboard_event(
         &mut self,
         event: &crossterm::KeyEvent,
-    ) -> std::result::Result<futures::Async<String>, Error> {
+    ) -> Result<futures::Async<String>> {
         match *event {
             crossterm::KeyEvent::Char('\n') => {
                 self.echo_char('\n').context(WriteToTerminal)?;
@@ -293,73 +278,18 @@ impl futures::future::Future for Readline {
             );
         }
 
-        self.with_reader(|reader, state| {
-            loop {
-                match reader.events.try_recv() {
-                    Ok(event) => {
-                        let a = state.process_event(event)?;
-                        if a.is_ready() {
-                            return Ok(a);
-                        }
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        return Ok(futures::Async::NotReady);
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        // is EOF correct here?
-                        return EOF.fail();
-                    }
+        loop {
+            if let Some(event) =
+                futures::try_ready!(self.reader.poll().context(KeyReader))
+            {
+                let a = self.state.process_event(event)?;
+                if a.is_ready() {
+                    return Ok(a);
                 }
+            } else {
+                eprintln!("EEEOOOFFF");
+                return Err(Error::EOF);
             }
-        })
-    }
-}
-
-struct KeyReader {
-    events: std::sync::mpsc::Receiver<crossterm::InputEvent>,
-    quit: std::sync::mpsc::Sender<()>,
-}
-
-impl KeyReader {
-    fn new(task: futures::task::Task) -> Result<Self> {
-        let reader = crossterm::input().read_sync();
-        let (events_tx, events_rx) = std::sync::mpsc::channel();
-        let (quit_tx, quit_rx) = std::sync::mpsc::channel();
-        // TODO: this is pretty janky - it'd be better to build in more useful
-        // support to crossterm directly
-        std::thread::Builder::new()
-            .spawn(move || {
-                for event in reader {
-                    let newline = event
-                        == crossterm::InputEvent::Keyboard(
-                            crossterm::KeyEvent::Char('\n'),
-                        );
-                    // unwrap is unpleasant, but so is figuring out how to
-                    // propagate the error back to the main thread
-                    events_tx.send(event).unwrap();
-                    task.notify();
-                    if newline {
-                        break;
-                    }
-                    if quit_rx.try_recv().is_ok() {
-                        break;
-                    }
-                }
-            })
-            .context(TerminalInputReadingThread)?;
-
-        Ok(Self {
-            events: events_rx,
-            quit: quit_tx,
-        })
-    }
-}
-
-impl Drop for KeyReader {
-    fn drop(&mut self) {
-        // don't care if it fails to send, this can happen if the thread
-        // terminates due to seeing a newline before the keyreader goes out of
-        // scope
-        let _ = self.quit.send(());
+        }
     }
 }
