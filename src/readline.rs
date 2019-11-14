@@ -14,7 +14,7 @@ pub enum Error {
         "failed to put the terminal into raw mode: {}",
         source
     ))]
-    IntoRawMode { source: std::io::Error },
+    IntoRawMode { source: crossterm::ErrorKind },
 
     #[snafu(display("{}", source))]
     KeyReader { source: crate::key_reader::Error },
@@ -29,7 +29,7 @@ pub fn readline() -> Readline {
 pub struct Readline {
     reader: crate::key_reader::KeyReader,
     state: ReadlineState,
-    raw_screen: Option<crossterm::RawScreen>,
+    raw_screen: Option<crossterm::screen::RawScreen>,
 }
 
 struct ReadlineState {
@@ -92,11 +92,11 @@ impl Readline {
 impl ReadlineState {
     fn process_event(
         &mut self,
-        event: crossterm::InputEvent,
+        event: &crossterm::input::InputEvent,
     ) -> Result<futures::Async<String>> {
         match event {
-            crossterm::InputEvent::Keyboard(e) => {
-                return self.process_keyboard_event(&e);
+            crossterm::input::InputEvent::Keyboard(e) => {
+                return self.process_keyboard_event(*e);
             }
             _ => {}
         }
@@ -106,17 +106,17 @@ impl ReadlineState {
 
     fn process_keyboard_event(
         &mut self,
-        event: &crossterm::KeyEvent,
+        event: crossterm::input::KeyEvent,
     ) -> Result<futures::Async<String>> {
-        match *event {
-            crossterm::KeyEvent::Char('\n') => {
+        match event {
+            crossterm::input::KeyEvent::Char('\n') => {
                 self.echo_char('\n').context(WriteToTerminal)?;
                 return Ok(futures::Async::Ready(self.buffer.clone()));
             }
-            crossterm::KeyEvent::Char('\t') => {
+            crossterm::input::KeyEvent::Char('\t') => {
                 // TODO
             }
-            crossterm::KeyEvent::Char(c) => {
+            crossterm::input::KeyEvent::Char(c) => {
                 if self.cursor != self.buffer.len() {
                     self.echo(b"\x1b[@").context(WriteToTerminal)?;
                 }
@@ -124,7 +124,7 @@ impl ReadlineState {
                 self.buffer.insert(self.cursor, c);
                 self.cursor += 1;
             }
-            crossterm::KeyEvent::Ctrl(c) => match c {
+            crossterm::input::KeyEvent::Ctrl(c) => match c {
                 'a' => {
                     if self.cursor != 0 {
                         self.echo(
@@ -178,7 +178,7 @@ impl ReadlineState {
                 }
                 _ => {}
             },
-            crossterm::KeyEvent::Backspace => {
+            crossterm::input::KeyEvent::Backspace => {
                 if self.cursor != 0 {
                     self.cursor -= 1;
                     self.buffer.remove(self.cursor);
@@ -189,19 +189,19 @@ impl ReadlineState {
                     }
                 }
             }
-            crossterm::KeyEvent::Left => {
+            crossterm::input::KeyEvent::Left => {
                 if self.cursor != 0 {
                     self.cursor -= 1;
                     self.write(b"\x1b[D").context(WriteToTerminal)?;
                 }
             }
-            crossterm::KeyEvent::Right => {
+            crossterm::input::KeyEvent::Right => {
                 if self.cursor != self.buffer.len() {
                     self.cursor += 1;
                     self.write(b"\x1b[C").context(WriteToTerminal)?;
                 }
             }
-            crossterm::KeyEvent::Delete => {
+            crossterm::input::KeyEvent::Delete => {
                 if self.cursor != self.buffer.len() {
                     self.buffer.remove(self.cursor);
                     self.echo(b"\x1b[P").context(WriteToTerminal)?;
@@ -274,7 +274,8 @@ impl futures::future::Future for Readline {
 
         if self.state.manage_screen && self.raw_screen.is_none() {
             self.raw_screen = Some(
-                crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?,
+                crossterm::screen::RawScreen::into_raw_mode()
+                    .context(IntoRawMode)?,
             );
         }
 
@@ -282,7 +283,7 @@ impl futures::future::Future for Readline {
             if let Some(event) =
                 futures::try_ready!(self.reader.poll().context(KeyReader))
             {
-                let a = self.state.process_event(event)?;
+                let a = self.state.process_event(&event)?;
                 if a.is_ready() {
                     return Ok(a);
                 }

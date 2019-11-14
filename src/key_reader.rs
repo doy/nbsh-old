@@ -16,8 +16,9 @@ pub enum Error {
 }
 
 pub struct KeyReader {
-    events:
-        Option<tokio::sync::mpsc::UnboundedReceiver<crossterm::InputEvent>>,
+    events: Option<
+        tokio::sync::mpsc::UnboundedReceiver<crossterm::input::InputEvent>,
+    >,
     quit: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -31,13 +32,13 @@ impl KeyReader {
 }
 
 impl futures::stream::Stream for KeyReader {
-    type Item = crossterm::InputEvent;
+    type Item = crossterm::input::InputEvent;
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         if self.events.is_none() {
             let task = futures::task::current();
-            let reader = crossterm::input().read_sync();
+            let reader = crossterm::input::input().read_sync();
             let (events_tx, events_rx) =
                 tokio::sync::mpsc::unbounded_channel();
             let mut events_tx = events_tx.wait();
@@ -47,21 +48,10 @@ impl futures::stream::Stream for KeyReader {
             std::thread::Builder::new()
                 .spawn(move || {
                     for event in reader {
-                        // sigh, this is extra janky, but otherwise the thread
-                        // will outlive the current instance and eat the first
-                        // character typed that was supposed to go to the
-                        // thread spawned by the next instance
-                        let newline = event
-                            == crossterm::InputEvent::Keyboard(
-                                crossterm::KeyEvent::Char('\n'),
-                            );
                         // unwrap is unpleasant, but so is figuring out how to
                         // propagate the error back to the main thread
                         events_tx.send(event).unwrap();
                         task.notify();
-                        if newline {
-                            break;
-                        }
                         if quit_rx.try_recv().is_ok() {
                             break;
                         }

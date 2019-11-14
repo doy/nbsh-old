@@ -11,10 +11,10 @@ keywords = ["shell", "terminal"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-crossterm = "0.9"
-futures = "0.1"
-mio = "0.6"
-nix = "0.14"
-snafu = { version = "0.4", features = ["futures-01"] }
-tokio = "0.1"
+crossterm = "0.13"
+futures = "0.1.29"
+mio = "0.6.19"
+nix = "0.15"
+snafu = { version = "0.5", features = ["futures-01"] }
+tokio = "0.1.22"
 tokio-pty-process-stream = "0.2"

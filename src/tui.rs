@@ -12,7 +12,7 @@ enum Error {
         "failed to put the terminal into raw mode: {}",
         source
     ))]
-    IntoRawMode { source: std::io::Error },
+    IntoRawMode { source: crossterm::ErrorKind },
 
     #[snafu(display("error during read: {}", source))]
     Read { source: crate::readline::Error },
@@ -38,7 +38,7 @@ pub struct Tui {
     idx: usize,
     readline: Option<crate::readline::Readline>,
     commands: std::collections::HashMap<usize, Command>,
-    raw_screen: Option<crossterm::RawScreen>,
+    raw_screen: Option<crossterm::screen::RawScreen>,
 }
 
 impl Tui {
@@ -218,7 +218,8 @@ impl Tui {
     fn poll_with_errors(&mut self) -> futures::Poll<(), Error> {
         if self.raw_screen.is_none() {
             self.raw_screen = Some(
-                crossterm::RawScreen::into_raw_mode().context(IntoRawMode)?,
+                crossterm::screen::RawScreen::into_raw_mode()
+                    .context(IntoRawMode)?,
             );
         }
 
