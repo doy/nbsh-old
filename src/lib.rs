@@ -11,6 +11,7 @@
 #![allow(clippy::multiple_crate_versions)]
 #![allow(clippy::similar_names)]
 #![allow(clippy::single_match)]
+#![allow(clippy::too_many_lines)]
 #![allow(clippy::write_with_newline)]
 
 mod async_stdin;
